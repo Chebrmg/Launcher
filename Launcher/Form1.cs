@@ -565,9 +565,8 @@ namespace Launcher
                 if (!Directory.Exists(savesDir))
                     continue;
 
-                for (int i = 0; i <= 2; i++)
+                foreach (string saveFile in Directory.GetFiles(savesDir, "save_*.sav"))
                 {
-                    string saveFile = Path.Combine(savesDir, "save_" + i + ".sav");
                     result.Add(saveFile);
                 }
             }
