@@ -33,6 +33,11 @@ namespace Launcher
         private Label? statusLabel;
         private TrainProgressBar? trainProgress;
 
+        // UserMods
+        private bool userModsEnabled = false;
+        private string userModsConfigPath;
+        private CheckBox? chkUserMods;
+
         // Автосохранения
         private bool autoSaveActive = false;
         private System.Windows.Forms.Timer autoSaveTimer;
@@ -57,7 +62,9 @@ namespace Launcher
             autoSaveConfigPath = Path.Combine(root, "autosave_status.txt");
             updateConfigPath = Path.Combine(root, "update_config.json");
             gameConfigPath = Path.Combine(root, "game_path.json");
+            userModsConfigPath = Path.Combine(root, "usermods_config.json");
             LoadGamePath();
+            LoadUserModsConfig();
             InitModUpdater();
             InitLauncherUpdater();
         }
@@ -85,6 +92,94 @@ namespace Launcher
                 File.WriteAllText(gameConfigPath, json);
             }
             catch { }
+        }
+
+        private void LoadUserModsConfig()
+        {
+            try
+            {
+                if (File.Exists(userModsConfigPath))
+                {
+                    string json = File.ReadAllText(userModsConfigPath);
+                    using var doc = JsonDocument.Parse(json);
+                    userModsEnabled = doc.RootElement.TryGetProperty("enabled", out var val) && val.GetBoolean();
+                }
+            }
+            catch { }
+        }
+
+        private void SaveUserModsConfig()
+        {
+            try
+            {
+                string json = JsonSerializer.Serialize(new { enabled = userModsEnabled }, new JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(userModsConfigPath, json);
+            }
+            catch { }
+        }
+
+        private string GetUserModsFolder()
+        {
+            return Path.Combine(root, "UserMods");
+        }
+
+        /// <summary>
+        /// Устанавливает выбранные UserMods перед запуском игры.
+        /// </summary>
+        private void InstallUserMods()
+        {
+            if (!userModsEnabled)
+                return;
+
+            string gameRoot = GetGameRoot();
+            string gameUserModsDir = Path.Combine(gameRoot, "UserMods");
+            string oldModsDir = Path.Combine(gameUserModsDir, "OldMods");
+
+            Directory.CreateDirectory(gameUserModsDir);
+            Directory.CreateDirectory(oldModsDir);
+
+            // Перемещаем все .h5u из папки_с_игрой/UserMods в OldMods
+            foreach (string existingMod in Directory.GetFiles(gameUserModsDir, "*.h5u"))
+            {
+                string destPath = Path.Combine(oldModsDir, Path.GetFileName(existingMod));
+                try
+                {
+                    if (File.Exists(destPath))
+                        File.Delete(destPath);
+                    File.Move(existingMod, destPath);
+                }
+                catch { }
+            }
+
+            // Устанавливаем выбранные моды из папки лаунчера
+            string launcherModsDir = GetUserModsFolder();
+            if (!Directory.Exists(launcherModsDir))
+                return;
+
+            foreach (string modFile in Directory.GetFiles(launcherModsDir, "*.h5u"))
+            {
+                var config = UserModConfig.ReadFromArchive(modFile);
+                if (!config.Install)
+                    continue;
+
+                string destFile = Path.Combine(gameUserModsDir, Path.GetFileName(modFile));
+
+                try
+                {
+                    File.Copy(modFile, destFile, true);
+
+                    // Проверяем маркер и патчим если нужно
+                    if (!UserModConfig.IsPatched(destFile, config.ForChebovka))
+                    {
+                        SetStatus($"Обновление мода: {config.Name}...");
+                        UserModConfig.PatchArchive(destFile, config.ForChebovka);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"UserMod install error ({config.Name}): {ex.Message}");
+                }
+            }
         }
 
         private const string DefaultVersionUrl = "https://drive.google.com/uc?export=download&id=1Lc3QEACm3M30oMDQFlJqpTYdx-5_S4Vn";
@@ -143,6 +238,9 @@ namespace Launcher
             string gameRoot = GetGameRoot();
             string binPath = Path.Combine(gameRoot, "bin");
             string gameExe = Path.Combine(binPath, "H5_Game.exe");
+
+            InstallUserMods();
+
             StartGame(binPath, gameExe);
         }
 
@@ -330,6 +428,9 @@ namespace Launcher
 
                     SetStatus("");
                 }
+
+                // Устанавливаем UserMods
+                InstallUserMods();
 
                 // Запуск
                 StartGame(binPath, gameExe);
@@ -954,6 +1055,38 @@ namespace Launcher
             btnSetPath.Location = new Point(400, 335);
             btnSetPath.Click += BtnSetGamePath_Click;
 
+            // КНОПКА USERMODS
+            Button btnUserMods = new Button();
+            btnUserMods.Parent = panel;
+            btnUserMods.Text = "UserMods";
+            btnUserMods.FlatStyle = FlatStyle.Flat;
+            btnUserMods.FlatAppearance.BorderSize = 0;
+            btnUserMods.BackColor = Color.FromArgb(40, 40, 60);
+            btnUserMods.ForeColor = Color.White;
+            btnUserMods.Font = new Font("Segoe UI", 9, FontStyle.Regular);
+            btnUserMods.Size = new Size(80, 28);
+            btnUserMods.Location = new Point(120, 335);
+            btnUserMods.Click += (s, ev) =>
+            {
+                string modsFolder = GetUserModsFolder();
+                var form = new UserModsForm(modsFolder);
+                form.ShowDialog(this);
+            };
+
+            // ЧЕКБОКС USERMODS (рядом с кнопкой)
+            chkUserMods = new CheckBox();
+            chkUserMods.Parent = panel;
+            chkUserMods.Text = "";
+            chkUserMods.Checked = userModsEnabled;
+            chkUserMods.AutoSize = true;
+            chkUserMods.Location = new Point(100, 340);
+            chkUserMods.ForeColor = Color.White;
+            chkUserMods.CheckedChanged += (s, ev) =>
+            {
+                userModsEnabled = chkUserMods.Checked;
+                SaveUserModsConfig();
+            };
+
             // КНОПКА ОБНОВИТЬ ЛАУНЧЕР (скрыта по умолчанию)
             btnUpdateLauncher = new Button();
             btnUpdateLauncher.Parent = panel;
@@ -994,6 +1127,7 @@ namespace Launcher
             SetHoverHint(btnStartMod, "Проверяет обновления мода и запускает игру");
             SetHoverHint(btnAutoSave, "Мониторинг и копирование автосохранений игры");
             SetHoverHint(btnSetPath, "Указать папку с игрой");
+            SetHoverHint(btnUserMods, "Открыть редактор пользовательских модов");
 
             // Показываем текущий путь к игре
             if (!string.IsNullOrEmpty(gamePath))
