@@ -36,7 +36,7 @@ namespace Launcher
         private void InitUI()
         {
             this.Text = "UserMods";
-            this.Size = new Size(980, 720);
+            this.Size = new Size(1100, 720);
             this.StartPosition = FormStartPosition.CenterParent;
             this.BackColor = Color.FromArgb(30, 30, 40);
             this.ForeColor = Color.White;
@@ -86,7 +86,7 @@ namespace Launcher
             _modsGrid = new DataGridView
             {
                 Location = new Point(10, 50),
-                Size = new Size(560, 620),
+                Size = new Size(680, 620),
                 BackgroundColor = Color.FromArgb(25, 25, 35),
                 ForeColor = Color.White,
                 GridColor = Color.FromArgb(60, 60, 80),
@@ -112,13 +112,13 @@ namespace Launcher
             _modsGrid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 9, FontStyle.Bold);
             _modsGrid.EnableHeadersVisualStyles = false;
 
-            _modsGrid.RowTemplate.Height = 50;
+            _modsGrid.RowTemplate.Height = 60;
 
             var colPreview = new DataGridViewImageColumn
             {
                 HeaderText = "",
                 Name = "colPreview",
-                Width = 50,
+                Width = 56,
                 ImageLayout = DataGridViewImageCellLayout.Zoom,
                 ReadOnly = true
             };
@@ -127,7 +127,7 @@ namespace Launcher
             {
                 HeaderText = "Название",
                 Name = "colName",
-                Width = 150,
+                Width = 190,
                 ReadOnly = true
             };
 
@@ -135,7 +135,7 @@ namespace Launcher
             {
                 HeaderText = "Краткое описание",
                 Name = "colDesc",
-                Width = 200,
+                Width = 260,
                 ReadOnly = true
             };
 
@@ -168,7 +168,7 @@ namespace Launcher
             // Панель деталей мода (справа)
             _detailPanel = new Panel
             {
-                Location = new Point(580, 50),
+                Location = new Point(700, 50),
                 Size = new Size(370, 620),
                 BackColor = Color.FromArgb(35, 35, 50),
                 AutoScroll = true
@@ -345,7 +345,7 @@ namespace Launcher
                 var config = UserModConfig.ReadFromArchive(file);
                 _mods.Add((file, config));
 
-                var thumb = GetThumbnail(file, 44, 44);
+                var thumb = GetThumbnail(file, 52, 52);
 
                 int rowIdx = _modsGrid.Rows.Add(
                     thumb,
@@ -462,7 +462,7 @@ namespace Launcher
             {
                 var oldThumb = _modsGrid.Rows[idx].Cells["colPreview"].Value as Image;
                 oldThumb?.Dispose();
-                _modsGrid.Rows[idx].Cells["colPreview"].Value = GetThumbnail(_selectedModPath, 44, 44);
+                _modsGrid.Rows[idx].Cells["colPreview"].Value = GetThumbnail(_selectedModPath, 52, 52);
             }
 
             MessageBox.Show("Превью загружено!", "UserMods", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -512,7 +512,7 @@ namespace Launcher
             {
                 var oldThumb = _modsGrid.Rows[idx].Cells["colPreview"].Value as Image;
                 oldThumb?.Dispose();
-                _modsGrid.Rows[idx].Cells["colPreview"].Value = GetThumbnail(_selectedModPath, 44, 44);
+                _modsGrid.Rows[idx].Cells["colPreview"].Value = GetThumbnail(_selectedModPath, 52, 52);
             }
         }
     }
