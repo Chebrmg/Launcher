@@ -27,6 +27,7 @@ namespace Launcher
         // Обновление лаунчера
         private LauncherUpdater? launcherUpdater;
         private Button? btnUpdateLauncher;
+        private Button? btnSetPath;
 
         // UI элементы
         private Label? statusLabel;
@@ -818,6 +819,7 @@ namespace Launcher
                 {
                     SaveGamePath(selected);
                     InitModUpdater();
+                    if (btnSetPath != null) btnSetPath.Text = "Изменить";
                     SetStatus($"Путь к игре: {selected}");
                 }
                 else
@@ -942,9 +944,9 @@ namespace Launcher
             hintLabel.BackColor = Color.Transparent;
 
             // КНОПКА УКАЗАТЬ ПУТЬ
-            Button btnSetPath = new Button();
+            btnSetPath = new Button();
             btnSetPath.Parent = panel;
-            btnSetPath.Text = "Указать путь";
+            btnSetPath.Text = string.IsNullOrEmpty(gamePath) ? "Указать" : "Изменить";
             btnSetPath.FlatStyle = FlatStyle.Flat;
             btnSetPath.FlatAppearance.BorderSize = 0;
             btnSetPath.BackColor = Color.FromArgb(40, 40, 60);
