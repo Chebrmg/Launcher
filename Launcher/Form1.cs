@@ -86,26 +86,23 @@ namespace Launcher
             catch { }
         }
 
+        private const string DefaultVersionUrl = "https://drive.google.com/uc?export=download&id=1Lc3QEACm3M30oMDQFlJqpTYdx-5_S4Vn";
+        private const string DefaultLauncherVersionUrl = "https://drive.google.com/uc?export=download&id=1I6PUUYOHFpQXqMMSGu0ZMgCK1RMRw43H";
+
         private void InitModUpdater()
         {
-            string versionUrl = ReadConfigValue("version_url");
+            string versionUrl = ReadConfigValue("version_url", DefaultVersionUrl);
             string modDir = string.IsNullOrEmpty(gamePath) ? root : gamePath;
-            if (!string.IsNullOrEmpty(versionUrl))
-            {
-                modUpdater = new ModUpdater(versionUrl, modDir);
-            }
+            modUpdater = new ModUpdater(versionUrl, modDir);
         }
 
         private void InitLauncherUpdater()
         {
-            string launcherUrl = ReadConfigValue("launcher_version_url");
-            if (!string.IsNullOrEmpty(launcherUrl))
-            {
-                launcherUpdater = new LauncherUpdater(launcherUrl, root);
-            }
+            string launcherUrl = ReadConfigValue("launcher_version_url", DefaultLauncherVersionUrl);
+            launcherUpdater = new LauncherUpdater(launcherUrl, root);
         }
 
-        private string ReadConfigValue(string key)
+        private string ReadConfigValue(string key, string defaultValue = "")
         {
             try
             {
@@ -114,11 +111,15 @@ namespace Launcher
                     string json = File.ReadAllText(updateConfigPath);
                     using var doc = JsonDocument.Parse(json);
                     if (doc.RootElement.TryGetProperty(key, out var val))
-                        return val.GetString() ?? "";
+                    {
+                        string? result = val.GetString();
+                        if (!string.IsNullOrEmpty(result))
+                            return result;
+                    }
                 }
             }
             catch { }
-            return "";
+            return defaultValue;
         }
 
         private string GetGameRoot()
