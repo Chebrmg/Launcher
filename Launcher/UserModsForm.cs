@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.IO;
 using System.Windows.Forms;
 
@@ -18,6 +19,8 @@ namespace Launcher
         private CheckBox _chkChebovka;
         private CheckBox _chkInstall;
         private Button _btnSave;
+        private PictureBox _previewBox;
+        private Button _btnLoadPreview;
         private string? _selectedModPath;
 
         private List<(string path, UserModConfig config)> _mods = new();
@@ -33,7 +36,7 @@ namespace Launcher
         private void InitUI()
         {
             this.Text = "UserMods";
-            this.Size = new Size(850, 550);
+            this.Size = new Size(900, 650);
             this.StartPosition = FormStartPosition.CenterParent;
             this.BackColor = Color.FromArgb(30, 30, 40);
             this.ForeColor = Color.White;
@@ -83,7 +86,7 @@ namespace Launcher
             _modsGrid = new DataGridView
             {
                 Location = new Point(10, 50),
-                Size = new Size(510, 450),
+                Size = new Size(520, 550),
                 BackgroundColor = Color.FromArgb(25, 25, 35),
                 ForeColor = Color.White,
                 GridColor = Color.FromArgb(60, 60, 80),
@@ -109,11 +112,22 @@ namespace Launcher
             _modsGrid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 9, FontStyle.Bold);
             _modsGrid.EnableHeadersVisualStyles = false;
 
+            _modsGrid.RowTemplate.Height = 50;
+
+            var colPreview = new DataGridViewImageColumn
+            {
+                HeaderText = "",
+                Name = "colPreview",
+                Width = 50,
+                ImageLayout = DataGridViewImageCellLayout.Zoom,
+                ReadOnly = true
+            };
+
             var colName = new DataGridViewTextBoxColumn
             {
                 HeaderText = "Название",
                 Name = "colName",
-                Width = 150,
+                Width = 130,
                 ReadOnly = true
             };
 
@@ -121,7 +135,7 @@ namespace Launcher
             {
                 HeaderText = "Краткое описание",
                 Name = "colDesc",
-                Width = 200,
+                Width = 170,
                 ReadOnly = true
             };
 
@@ -139,7 +153,7 @@ namespace Launcher
                 Width = 75
             };
 
-            _modsGrid.Columns.AddRange(colName, colDesc, colChebovka, colInstall);
+            _modsGrid.Columns.AddRange(colPreview, colName, colDesc, colChebovka, colInstall);
 
             _modsGrid.CellClick += ModsGrid_CellClick;
             _modsGrid.CellValueChanged += ModsGrid_CellValueChanged;
@@ -155,12 +169,42 @@ namespace Launcher
             _detailPanel = new Panel
             {
                 Location = new Point(530, 50),
-                Size = new Size(300, 450),
-                BackColor = Color.FromArgb(35, 35, 50)
+                Size = new Size(340, 550),
+                BackColor = Color.FromArgb(35, 35, 50),
+                AutoScroll = true
             };
             this.Controls.Add(_detailPanel);
 
             int y = 10;
+
+            // Превью картинка
+            _previewBox = new PictureBox
+            {
+                Location = new Point(10, y),
+                Size = new Size(315, 180),
+                BackColor = Color.FromArgb(25, 25, 35),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BorderStyle = BorderStyle.FixedSingle
+            };
+            _detailPanel.Controls.Add(_previewBox);
+            y += 190;
+
+            // Кнопка загрузки превью
+            _btnLoadPreview = new Button
+            {
+                Text = "Загрузить превью",
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(40, 40, 60),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 8, FontStyle.Regular),
+                Size = new Size(315, 25),
+                Location = new Point(10, y)
+            };
+            _btnLoadPreview.FlatAppearance.BorderSize = 0;
+            _btnLoadPreview.Click += BtnLoadPreview_Click;
+            _detailPanel.Controls.Add(_btnLoadPreview);
+            y += 35;
+
             AddDetailLabel("Название:", ref y);
             _txtName = AddDetailTextBox(ref y, false);
 
@@ -171,7 +215,7 @@ namespace Launcher
             _txtFullDesc = new TextBox
             {
                 Location = new Point(10, y),
-                Size = new Size(275, 120),
+                Size = new Size(315, 100),
                 BackColor = Color.FromArgb(45, 45, 60),
                 ForeColor = Color.White,
                 Font = new Font("Segoe UI", 9),
@@ -180,7 +224,7 @@ namespace Launcher
                 ScrollBars = ScrollBars.Vertical
             };
             _detailPanel.Controls.Add(_txtFullDesc);
-            y += 130;
+            y += 110;
 
             _chkChebovka = new CheckBox
             {
@@ -211,7 +255,7 @@ namespace Launcher
                 BackColor = Color.FromArgb(0, 80, 0),
                 ForeColor = Color.White,
                 Font = new Font("Segoe UI", 10, FontStyle.Bold),
-                Size = new Size(275, 35),
+                Size = new Size(315, 35),
                 Location = new Point(10, y)
             };
             _btnSave.FlatAppearance.BorderSize = 0;
@@ -240,7 +284,7 @@ namespace Launcher
             var txt = new TextBox
             {
                 Location = new Point(10, y),
-                Size = new Size(275, multiline ? 80 : 25),
+                Size = new Size(315, multiline ? 80 : 25),
                 BackColor = Color.FromArgb(45, 45, 60),
                 ForeColor = Color.White,
                 Font = new Font("Segoe UI", 9),
@@ -258,6 +302,33 @@ namespace Launcher
                 c.Visible = visible;
         }
 
+        private Image GetThumbnail(string h5uPath, int width, int height)
+        {
+            var preview = UserModConfig.ReadPreviewFromArchive(h5uPath);
+            if (preview != null)
+            {
+                var thumb = new Bitmap(width, height);
+                using (var g = Graphics.FromImage(thumb))
+                {
+                    g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                    g.DrawImage(preview, 0, 0, width, height);
+                }
+                preview.Dispose();
+                return thumb;
+            }
+
+            var empty = new Bitmap(width, height);
+            using (var g = Graphics.FromImage(empty))
+            {
+                g.Clear(Color.FromArgb(40, 40, 55));
+                using var font = new Font("Segoe UI", 7);
+                using var brush = new SolidBrush(Color.FromArgb(100, 100, 120));
+                var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+                g.DrawString("Нет\nфото", font, brush, new RectangleF(0, 0, width, height), sf);
+            }
+            return empty;
+        }
+
         private void LoadMods()
         {
             _mods.Clear();
@@ -271,7 +342,10 @@ namespace Launcher
                 var config = UserModConfig.ReadFromArchive(file);
                 _mods.Add((file, config));
 
+                var thumb = GetThumbnail(file, 44, 44);
+
                 int rowIdx = _modsGrid.Rows.Add(
+                    thumb,
                     config.Name,
                     config.ShortDescription,
                     config.ForChebovka,
@@ -302,6 +376,10 @@ namespace Launcher
             _txtFullDesc.Text = config.FullDescription;
             _chkChebovka.Checked = config.ForChebovka;
             _chkInstall.Checked = config.Install;
+
+            // Загружаем превью
+            _previewBox.Image?.Dispose();
+            _previewBox.Image = UserModConfig.ReadPreviewFromArchive(path);
 
             SetDetailPanelVisible(true);
         }
@@ -353,6 +431,38 @@ namespace Launcher
             row.Cells["colInstall"].Value = config.Install;
 
             MessageBox.Show("Сохранено!", "UserMods", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void BtnLoadPreview_Click(object? sender, EventArgs e)
+        {
+            if (_selectedModPath == null)
+                return;
+
+            using var dlg = new OpenFileDialog
+            {
+                Title = "Выберите картинку для превью",
+                Filter = "Изображения|*.png;*.jpg;*.jpeg;*.bmp|Все файлы|*.*"
+            };
+
+            if (dlg.ShowDialog() != DialogResult.OK)
+                return;
+
+            UserModConfig.SavePreviewToArchive(_selectedModPath, dlg.FileName);
+
+            // Обновляем превью в панели деталей
+            _previewBox.Image?.Dispose();
+            _previewBox.Image = UserModConfig.ReadPreviewFromArchive(_selectedModPath);
+
+            // Обновляем миниатюру в таблице
+            int idx = _mods.FindIndex(m => m.path == _selectedModPath);
+            if (idx >= 0)
+            {
+                var oldThumb = _modsGrid.Rows[idx].Cells["colPreview"].Value as Image;
+                oldThumb?.Dispose();
+                _modsGrid.Rows[idx].Cells["colPreview"].Value = GetThumbnail(_selectedModPath, 44, 44);
+            }
+
+            MessageBox.Show("Превью загружено!", "UserMods", MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
     }
 }
