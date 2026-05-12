@@ -1,4 +1,5 @@
 using System;
+using System.Drawing;
 using System.IO;
 using System.IO.Compression;
 using System.Text.Json;
@@ -14,6 +15,7 @@ namespace Launcher
         public bool Install { get; set; }
 
         private const string ConfigEntryName = "Mod_Config";
+        private const string PreviewEntryName = "preview.png";
 
         public static UserModConfig ReadFromArchive(string h5uPath)
         {
@@ -57,6 +59,44 @@ namespace Launcher
                 string json = JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true });
                 using var writer = new StreamWriter(stream);
                 writer.Write(json);
+            }
+            catch { }
+        }
+
+        public static Image? ReadPreviewFromArchive(string h5uPath)
+        {
+            try
+            {
+                using var zip = ZipFile.OpenRead(h5uPath);
+                var entry = zip.GetEntry(PreviewEntryName);
+                if (entry == null)
+                    return null;
+
+                using var stream = entry.Open();
+                using var ms = new MemoryStream();
+                stream.CopyTo(ms);
+                ms.Position = 0;
+                return Image.FromStream(ms);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        public static void SavePreviewToArchive(string h5uPath, string imagePath)
+        {
+            try
+            {
+                using var zip = ZipFile.Open(h5uPath, ZipArchiveMode.Update);
+
+                var existing = zip.GetEntry(PreviewEntryName);
+                existing?.Delete();
+
+                var entry = zip.CreateEntry(PreviewEntryName, CompressionLevel.Optimal);
+                using var output = entry.Open();
+                using var input = File.OpenRead(imagePath);
+                input.CopyTo(output);
             }
             catch { }
         }
