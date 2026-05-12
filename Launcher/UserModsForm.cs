@@ -184,8 +184,11 @@ namespace Launcher
                 Size = new Size(315, 180),
                 BackColor = Color.FromArgb(25, 25, 35),
                 SizeMode = PictureBoxSizeMode.Zoom,
-                BorderStyle = BorderStyle.FixedSingle
+                BorderStyle = BorderStyle.FixedSingle,
+                AllowDrop = true
             };
+            _previewBox.DragEnter += PreviewBox_DragEnter;
+            _previewBox.DragDrop += PreviewBox_DragDrop;
             _detailPanel.Controls.Add(_previewBox);
             y += 190;
 
@@ -463,6 +466,54 @@ namespace Launcher
             }
 
             MessageBox.Show("Превью загружено!", "UserMods", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+
+        private void PreviewBox_DragEnter(object? sender, DragEventArgs e)
+        {
+            if (_selectedModPath == null || e.Data == null)
+                return;
+
+            if (e.Data.GetDataPresent(DataFormats.FileDrop))
+            {
+                string[] files = (string[])e.Data.GetData(DataFormats.FileDrop)!;
+                if (files.Length > 0)
+                {
+                    string ext = Path.GetExtension(files[0]).ToLower();
+                    if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp")
+                    {
+                        e.Effect = DragDropEffects.Copy;
+                        return;
+                    }
+                }
+            }
+            e.Effect = DragDropEffects.None;
+        }
+
+        private void PreviewBox_DragDrop(object? sender, DragEventArgs e)
+        {
+            if (_selectedModPath == null || e.Data == null)
+                return;
+
+            if (!e.Data.GetDataPresent(DataFormats.FileDrop))
+                return;
+
+            string[] files = (string[])e.Data.GetData(DataFormats.FileDrop)!;
+            if (files.Length == 0)
+                return;
+
+            string imagePath = files[0];
+            UserModConfig.SavePreviewToArchive(_selectedModPath, imagePath);
+
+            _previewBox.Image?.Dispose();
+            _previewBox.Image = UserModConfig.ReadPreviewFromArchive(_selectedModPath);
+
+            int idx = _mods.FindIndex(m => m.path == _selectedModPath);
+            if (idx >= 0)
+            {
+                var oldThumb = _modsGrid.Rows[idx].Cells["colPreview"].Value as Image;
+                oldThumb?.Dispose();
+                _modsGrid.Rows[idx].Cells["colPreview"].Value = GetThumbnail(_selectedModPath, 44, 44);
+            }
         }
     }
 }
