@@ -36,7 +36,7 @@ namespace Launcher
         private void InitUI()
         {
             this.Text = "UserMods";
-            this.Size = new Size(900, 650);
+            this.Size = new Size(980, 720);
             this.StartPosition = FormStartPosition.CenterParent;
             this.BackColor = Color.FromArgb(30, 30, 40);
             this.ForeColor = Color.White;
@@ -86,7 +86,7 @@ namespace Launcher
             _modsGrid = new DataGridView
             {
                 Location = new Point(10, 50),
-                Size = new Size(520, 550),
+                Size = new Size(560, 620),
                 BackgroundColor = Color.FromArgb(25, 25, 35),
                 ForeColor = Color.White,
                 GridColor = Color.FromArgb(60, 60, 80),
@@ -127,7 +127,7 @@ namespace Launcher
             {
                 HeaderText = "Название",
                 Name = "colName",
-                Width = 130,
+                Width = 150,
                 ReadOnly = true
             };
 
@@ -135,7 +135,7 @@ namespace Launcher
             {
                 HeaderText = "Краткое описание",
                 Name = "colDesc",
-                Width = 170,
+                Width = 200,
                 ReadOnly = true
             };
 
@@ -168,8 +168,8 @@ namespace Launcher
             // Панель деталей мода (справа)
             _detailPanel = new Panel
             {
-                Location = new Point(530, 50),
-                Size = new Size(340, 550),
+                Location = new Point(580, 50),
+                Size = new Size(370, 620),
                 BackColor = Color.FromArgb(35, 35, 50),
                 AutoScroll = true
             };
@@ -181,7 +181,7 @@ namespace Launcher
             _previewBox = new PictureBox
             {
                 Location = new Point(10, y),
-                Size = new Size(315, 180),
+                Size = new Size(345, 190),
                 BackColor = Color.FromArgb(25, 25, 35),
                 SizeMode = PictureBoxSizeMode.Zoom,
                 BorderStyle = BorderStyle.FixedSingle,
@@ -200,7 +200,7 @@ namespace Launcher
                 BackColor = Color.FromArgb(40, 40, 60),
                 ForeColor = Color.White,
                 Font = new Font("Segoe UI", 8, FontStyle.Regular),
-                Size = new Size(315, 25),
+                Size = new Size(345, 28),
                 Location = new Point(10, y)
             };
             _btnLoadPreview.FlatAppearance.BorderSize = 0;
@@ -218,7 +218,7 @@ namespace Launcher
             _txtFullDesc = new TextBox
             {
                 Location = new Point(10, y),
-                Size = new Size(315, 100),
+                Size = new Size(345, 110),
                 BackColor = Color.FromArgb(45, 45, 60),
                 ForeColor = Color.White,
                 Font = new Font("Segoe UI", 9),
@@ -258,7 +258,7 @@ namespace Launcher
                 BackColor = Color.FromArgb(0, 80, 0),
                 ForeColor = Color.White,
                 Font = new Font("Segoe UI", 10, FontStyle.Bold),
-                Size = new Size(315, 35),
+                Size = new Size(345, 35),
                 Location = new Point(10, y)
             };
             _btnSave.FlatAppearance.BorderSize = 0;
@@ -287,7 +287,7 @@ namespace Launcher
             var txt = new TextBox
             {
                 Location = new Point(10, y),
-                Size = new Size(315, multiline ? 80 : 25),
+                Size = new Size(345, multiline ? 80 : 25),
                 BackColor = Color.FromArgb(45, 45, 60),
                 ForeColor = Color.White,
                 Font = new Font("Segoe UI", 9),
