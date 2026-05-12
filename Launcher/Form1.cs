@@ -93,8 +93,7 @@ namespace Launcher
         private void InitModUpdater()
         {
             string versionUrl = ReadConfigValue("version_url", DefaultVersionUrl);
-            string modDir = string.IsNullOrEmpty(gamePath) ? root : gamePath;
-            modUpdater = new ModUpdater(versionUrl, modDir);
+            modUpdater = new ModUpdater(versionUrl, root);
         }
 
         private void InitLauncherUpdater()
@@ -185,7 +184,7 @@ namespace Launcher
 
             string gameExe = Path.Combine(binPath, "H5_Game.exe");
 
-            string modSource = Path.Combine(gameRoot, "Chebovka.pak");
+            string modSource = Path.Combine(root, "Chebovka.pak");
             string modTarget = Path.Combine(dataPath, "Chebovka.pak");
 
             try
@@ -288,14 +287,14 @@ namespace Launcher
                         }
                     }
 
-                    // Определяем имя файла мода
+                    // Определяем имя файла мода (хранится в папке лаунчера)
                     string actualModSource = modSource;
                     if (modUpdater != null)
                     {
                         var remote = Task.Run(() => modUpdater.GetRemoteVersionAsync()).Result;
                         if (remote != null)
                         {
-                            string downloadedModFile = Path.Combine(gameRoot, remote.file_name);
+                            string downloadedModFile = Path.Combine(root, remote.file_name);
                             if (File.Exists(downloadedModFile))
                                 actualModSource = downloadedModFile;
                         }

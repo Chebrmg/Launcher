@@ -94,11 +94,36 @@ namespace Launcher
             }
         }
 
+        public bool IsModFilePresent()
+        {
+            try
+            {
+                string? localVersion = GetLocalVersion();
+                if (localVersion == null)
+                    return false;
+
+                string json = File.ReadAllText(_localVersionPath);
+                var info = JsonSerializer.Deserialize<ModVersionInfo>(json);
+                if (info == null || string.IsNullOrEmpty(info.file_name))
+                    return false;
+
+                string modFilePath = Path.Combine(_modDir, info.file_name);
+                return File.Exists(modFilePath);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         public async Task<bool> IsUpdateAvailableAsync()
         {
             var remote = await GetRemoteVersionAsync();
             if (remote == null)
                 return false;
+
+            if (!IsModFilePresent())
+                return true;
 
             string localVersion = GetLocalVersion() ?? "";
             return localVersion != remote.version;
