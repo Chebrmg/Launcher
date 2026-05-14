@@ -162,18 +162,18 @@ namespace Launcher
                 if (!config.Install)
                     continue;
 
-                string destFile = Path.Combine(gameUserModsDir, Path.GetFileName(modFile));
-
                 try
                 {
-                    File.Copy(modFile, destFile, true);
-
-                    // Проверяем маркер и патчим если нужно
-                    if (!UserModConfig.IsPatched(destFile, config.ForChebovka))
+                    // Патчим в папке лаунчера (один раз, потом флаг стоит)
+                    if (!UserModConfig.IsPatched(modFile, config.ForChebovka))
                     {
                         SetStatus($"Обновление мода: {config.Name}...");
-                        UserModConfig.PatchArchive(destFile, config.ForChebovka);
+                        UserModConfig.PatchArchive(modFile, config.ForChebovka);
                     }
+
+                    // Копируем уже пропатченный архив в папку игры
+                    string destFile = Path.Combine(gameUserModsDir, Path.GetFileName(modFile));
+                    File.Copy(modFile, destFile, true);
                 }
                 catch (Exception ex)
                 {
