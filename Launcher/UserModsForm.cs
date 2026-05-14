@@ -112,13 +112,13 @@ namespace Launcher
             _modsGrid.ColumnHeadersDefaultCellStyle.Font = new Font("Segoe UI", 9, FontStyle.Bold);
             _modsGrid.EnableHeadersVisualStyles = false;
 
-            _modsGrid.RowTemplate.Height = 60;
+            _modsGrid.RowTemplate.Height = 126;
 
             var colPreview = new DataGridViewImageColumn
             {
                 HeaderText = "",
                 Name = "colPreview",
-                Width = 56,
+                Width = 117,
                 ImageLayout = DataGridViewImageCellLayout.Zoom,
                 ReadOnly = true
             };
@@ -143,14 +143,14 @@ namespace Launcher
             {
                 HeaderText = "Chebovka",
                 Name = "colChebovka",
-                Width = 75
+                Width = 86
             };
 
             var colInstall = new DataGridViewCheckBoxColumn
             {
                 HeaderText = "Установка",
                 Name = "colInstall",
-                Width = 75
+                Width = 86
             };
 
             _modsGrid.Columns.AddRange(colPreview, colName, colDesc, colChebovka, colInstall);
@@ -345,7 +345,7 @@ namespace Launcher
                 var config = UserModConfig.ReadFromArchive(file);
                 _mods.Add((file, config));
 
-                var thumb = GetThumbnail(file, 52, 52);
+                var thumb = GetThumbnail(file, 108, 108);
 
                 int rowIdx = _modsGrid.Rows.Add(
                     thumb,
@@ -462,7 +462,7 @@ namespace Launcher
             {
                 var oldThumb = _modsGrid.Rows[idx].Cells["colPreview"].Value as Image;
                 oldThumb?.Dispose();
-                _modsGrid.Rows[idx].Cells["colPreview"].Value = GetThumbnail(_selectedModPath, 52, 52);
+                _modsGrid.Rows[idx].Cells["colPreview"].Value = GetThumbnail(_selectedModPath, 108, 108);
             }
 
             MessageBox.Show("Превью загружено!", "UserMods", MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -512,7 +512,7 @@ namespace Launcher
             {
                 var oldThumb = _modsGrid.Rows[idx].Cells["colPreview"].Value as Image;
                 oldThumb?.Dispose();
-                _modsGrid.Rows[idx].Cells["colPreview"].Value = GetThumbnail(_selectedModPath, 52, 52);
+                _modsGrid.Rows[idx].Cells["colPreview"].Value = GetThumbnail(_selectedModPath, 108, 108);
             }
         }
     }

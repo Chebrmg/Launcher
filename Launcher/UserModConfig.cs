@@ -166,12 +166,16 @@ namespace Launcher
                     foreach (var entry in source.Entries)
                     {
                         if (entry.FullName == "_patched_usermod.flag" ||
-                            entry.FullName == "_patched_chebovka.flag" ||
-                            entry.FullName == ConfigEntryName)
+                            entry.FullName == "_patched_chebovka.flag")
                             continue;
 
                         var newEntry = target.CreateEntry(entry.FullName, CompressionLevel.Optimal);
-                        newEntry.LastWriteTime = patchDate;
+
+                        // Mod_Config и preview.png сохраняем без изменения даты
+                        if (entry.FullName == ConfigEntryName || entry.FullName == PreviewEntryName)
+                            newEntry.LastWriteTime = entry.LastWriteTime;
+                        else
+                            newEntry.LastWriteTime = patchDate;
 
                         using var input = entry.Open();
                         using var output = newEntry.Open();
