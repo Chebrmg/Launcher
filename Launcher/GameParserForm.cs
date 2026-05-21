@@ -482,7 +482,9 @@ namespace Launcher
             }
 
             panel.BackColor = Color.FromArgb(50, 50, 70);
+            panel.Cursor = Cursors.Hand;
             var creature = slot.Creature;
+            panel.DoubleClick += (s, ev) => ShowCreatureDetail(creature);
 
             // Иконка
             var icon = new PictureBox
@@ -493,7 +495,9 @@ namespace Launcher
                 SizeMode = PictureBoxSizeMode.Zoom,
                 Image = creature.Icon != null ? new Bitmap(creature.Icon) : null,
                 BackColor = Color.FromArgb(35, 35, 50),
+                Cursor = Cursors.Hand,
             };
+            icon.DoubleClick += (s, ev) => ShowCreatureDetail(creature);
 
             // Имя + количество
             var nameLbl = new Label
@@ -504,7 +508,9 @@ namespace Launcher
                 ForeColor = Color.White,
                 Location = new Point(95, 5),
                 AutoSize = true,
+                Cursor = Cursors.Hand,
             };
+            nameLbl.DoubleClick += (s, ev) => ShowCreatureDetail(creature);
 
             // Статы краткие
             var statsLbl = new Label
@@ -515,7 +521,9 @@ namespace Launcher
                 ForeColor = Color.LightGray,
                 Location = new Point(95, 25),
                 AutoSize = true,
+                Cursor = Cursors.Hand,
             };
+            statsLbl.DoubleClick += (s, ev) => ShowCreatureDetail(creature);
 
             var gradeLbl = new Label
             {
@@ -525,7 +533,9 @@ namespace Launcher
                 ForeColor = creature.IsBase ? Color.Gray : Color.FromArgb(100, 255, 100),
                 Location = new Point(95, 43),
                 AutoSize = true,
+                Cursor = Cursors.Hand,
             };
+            gradeLbl.DoubleClick += (s, ev) => ShowCreatureDetail(creature);
 
             // Кнопки грейда (2 кнопки для 2 грейдов)
             if (creature.IsBase && creature.Upgrades.Count > 0)
@@ -927,13 +937,14 @@ namespace Launcher
         public CreatureDetailForm(CreatureInfo creature)
         {
             Text = creature.Name;
-            Size = new Size(420, 500);
+            Size = new Size(450, 700);
             StartPosition = FormStartPosition.CenterParent;
             BackColor = Color.FromArgb(30, 30, 40);
             ForeColor = Color.White;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
+            AutoScroll = true;
 
             // Иконка
             new PictureBox
@@ -1013,12 +1024,13 @@ namespace Launcher
             {
                 Parent = this,
                 Text = string.Join("\n", statsLines),
-                Font = new Font("Segoe UI", 9),
+                Font = new Font("Segoe UI", 10),
                 ForeColor = Color.White,
                 Location = new Point(25, y),
-                Size = new Size(370, 170),
+                AutoSize = true,
+                MaximumSize = new Size(390, 0),
             };
-            y += statsLines.Count * 17 + 10;
+            y += statsLines.Count * 20 + 15;
 
             // Способности
             if (creature.Abilities.Count > 0)
@@ -1038,10 +1050,11 @@ namespace Launcher
                 {
                     Parent = this,
                     Text = string.Join("\n", creature.Abilities.Select(a => "  " + a)),
-                    Font = new Font("Segoe UI", 9),
+                    Font = new Font("Segoe UI", 10),
                     ForeColor = Color.FromArgb(180, 255, 180),
                     Location = new Point(25, y),
-                    Size = new Size(370, creature.Abilities.Count * 17 + 5),
+                    AutoSize = true,
+                    MaximumSize = new Size(390, 0),
                 };
             }
         }
