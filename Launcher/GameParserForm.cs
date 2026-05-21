@@ -329,18 +329,6 @@ namespace Launcher
         }
     }
 
-    /// <summary>
-    /// Вкладка закупа армии одного игрока.
-    /// </summary>
-    internal class DoubleBufferedPanel : Panel
-    {
-        public DoubleBufferedPanel()
-        {
-            DoubleBuffered = true;
-            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
-        }
-    }
-
     internal class ArmyPurchaseTab
     {
         private readonly TabPage _tab;
