@@ -542,7 +542,7 @@ namespace Launcher
                             Parent = panel,
                             Text = $"▲ {upgraded.Name} ({costDiff}g)",
                             Font = new Font("Segoe UI", 7),
-                            Size = new Size(150, 22),
+                            Size = new Size(120, 22),
                             Location = new Point(btnX, 43),
                             FlatStyle = FlatStyle.Flat,
                             BackColor = Color.FromArgb(50, 100, 50),
@@ -551,7 +551,7 @@ namespace Launcher
                         };
                         btnUp.FlatAppearance.BorderSize = 0;
                         btnUp.Click += BtnUpgrade_Click;
-                        btnX += 155;
+                        btnX += 125;
                     }
                 }
             }
@@ -568,7 +568,7 @@ namespace Launcher
                         Parent = panel,
                         Text = $"▼ {baseCreature.Name} (0g)",
                         Font = new Font("Segoe UI", 7),
-                        Size = new Size(130, 22),
+                        Size = new Size(120, 22),
                         Location = new Point(200, 43),
                         FlatStyle = FlatStyle.Flat,
                         BackColor = Color.FromArgb(80, 80, 50),
@@ -592,8 +592,8 @@ namespace Launcher
                                 Parent = panel,
                                 Text = $"⇄ {other.Name} ({displayCost}g)",
                                 Font = new Font("Segoe UI", 7),
-                                Size = new Size(130, 22),
-                                Location = new Point(335, 43),
+                                Size = new Size(120, 22),
+                                Location = new Point(325, 43),
                                 FlatStyle = FlatStyle.Flat,
                                 BackColor = Color.FromArgb(60, 60, 100),
                                 ForeColor = Color.White,
@@ -805,14 +805,16 @@ namespace Launcher
 
             if (canBuy && hasSlot)
             {
+                int maxByGold = creature.Gold > 0 ? _gold.Remaining / creature.Gold : maxBuy;
+                int realMax = Math.Max(1, Math.Min(maxBuy, maxByGold));
                 var nud = new NumericUpDown
                 {
                     Parent = card,
                     Location = new Point(420, 8),
                     Size = new Size(60, 25),
                     Minimum = 1,
-                    Maximum = maxBuy,
-                    Value = Math.Min(maxBuy, 1),
+                    Maximum = realMax,
+                    Value = realMax,
                     Font = new Font("Segoe UI", 9),
                     BackColor = Color.FromArgb(50, 50, 65),
                     ForeColor = Color.White,
