@@ -170,7 +170,8 @@ namespace Launcher
                 parser.BuildVfs();
                 var c1 = parser.ParseCreatures(new List<string> { _faction1 });
                 var c2 = parser.ParseCreatures(new List<string> { _faction2 });
-                return (c1, c2, parser.DiagInfo);
+                var artifacts = parser.ParseArtifacts();
+                return (c1, c2, artifacts, parser.DiagInfo);
             }).ContinueWith(task =>
             {
                 if (task.IsFaulted)
@@ -181,7 +182,7 @@ namespace Launcher
                     return;
                 }
 
-                var (c1, c2, diag) = task.Result;
+                var (c1, c2, artifacts, diag) = task.Result;
                 if (c1.Count == 0 && c2.Count == 0)
                 {
                     _selectionStatus.Text = "Юниты не найдены.\n\nДиагностика:\n" + diag;
@@ -190,61 +191,111 @@ namespace Launcher
                     return;
                 }
 
-                ShowMainContent(c1, c2);
+                ShowMainContent(c1, c2, artifacts);
             }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
         }
 
-        private void ShowMainContent(List<CreatureInfo> creatures1, List<CreatureInfo> creatures2)
+        private void ShowMainContent(List<CreatureInfo> creatures1, List<CreatureInfo> creatures2, List<ArtifactInfo> artifacts)
         {
             _selectionPanel.Visible = false;
+
+            // Панель переключения игроков
+            var playerPanel = new Panel
+            {
+                Parent = this,
+                Location = new Point(10, 10),
+                Size = new Size(Width - 36, 40),
+                BackColor = Color.FromArgb(35, 35, 50),
+            };
+
+            var btnPlayer1 = new Button
+            {
+                Parent = playerPanel,
+                Text = $"Игрок 1: {_faction1}",
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                Size = new Size(250, 34),
+                Location = new Point(3, 3),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(100, 180, 255),
+                ForeColor = Color.Black,
+            };
+            btnPlayer1.FlatAppearance.BorderSize = 0;
+
+            var btnPlayer2 = new Button
+            {
+                Parent = playerPanel,
+                Text = $"Игрок 2: {_faction2}",
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                Size = new Size(250, 34),
+                Location = new Point(260, 3),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(60, 60, 80),
+                ForeColor = Color.White,
+            };
+            btnPlayer2.FlatAppearance.BorderSize = 0;
+
+            _tabs.Location = new Point(10, 55);
+            _tabs.Size = new Size(Width - 36, Height - 105);
             _tabs.Visible = true;
             _tabs.TabPages.Clear();
 
-            var goldState = new GoldState(_totalGold);
+            var goldState1 = new GoldState(_totalGold);
+            var goldState2 = new GoldState(_totalGold);
 
-            // Вкладка Игрок 1
-            var tabP1 = new TabPage($"Игрок 1: {_faction1}")
-            {
-                BackColor = Color.FromArgb(30, 30, 40),
-                ForeColor = Color.White,
-            };
-            new ArmyPurchaseTab(tabP1, creatures1, goldState);
-            _tabs.TabPages.Add(tabP1);
+            // Вкладки Игрока 1
+            var tabArmy1 = new TabPage("Армия") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
+            new ArmyPurchaseTab(tabArmy1, creatures1, goldState1);
 
-            // Вкладка Игрок 2
-            var tabP2 = new TabPage($"Игрок 2: {_faction2}")
-            {
-                BackColor = Color.FromArgb(30, 30, 40),
-                ForeColor = Color.White,
-            };
-            new ArmyPurchaseTab(tabP2, creatures2, goldState);
-            _tabs.TabPages.Add(tabP2);
+            var tabArt1 = new TabPage("Артефакты") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
+            new ArtifactTab(tabArt1, artifacts, goldState1);
 
-            // Артефакты (заглушка)
-            var tabArt = new TabPage("Артефакты")
-            {
-                BackColor = Color.FromArgb(30, 30, 40),
-                ForeColor = Color.White,
-            };
-            tabArt.Controls.Add(new Label
-            {
-                Text = "В разработке...", ForeColor = Color.Gray,
-                Font = new Font("Segoe UI", 14), AutoSize = true, Location = new Point(20, 20),
-            });
-            _tabs.TabPages.Add(tabArt);
+            var tabSpells1 = new TabPage("Заклинания") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
+            tabSpells1.Controls.Add(new Label { Text = "В разработке...", ForeColor = Color.Gray, Font = new Font("Segoe UI", 14), AutoSize = true, Location = new Point(20, 20) });
 
-            // Заклинания (заглушка)
-            var tabSpells = new TabPage("Заклинания")
+            // Вкладки Игрока 2
+            var tabArmy2 = new TabPage("Армия") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
+            new ArmyPurchaseTab(tabArmy2, creatures2, goldState2);
+
+            var tabArt2 = new TabPage("Артефакты") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
+            new ArtifactTab(tabArt2, artifacts, goldState2);
+
+            var tabSpells2 = new TabPage("Заклинания") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
+            tabSpells2.Controls.Add(new Label { Text = "В разработке...", ForeColor = Color.Gray, Font = new Font("Segoe UI", 14), AutoSize = true, Location = new Point(20, 20) });
+
+            // По умолчанию — Игрок 1
+            _tabs.TabPages.Add(tabArmy1);
+            _tabs.TabPages.Add(tabArt1);
+            _tabs.TabPages.Add(tabSpells1);
+
+            btnPlayer1.Click += (s, ev) =>
             {
-                BackColor = Color.FromArgb(30, 30, 40),
-                ForeColor = Color.White,
+                btnPlayer1.BackColor = Color.FromArgb(100, 180, 255);
+                btnPlayer1.ForeColor = Color.Black;
+                btnPlayer2.BackColor = Color.FromArgb(60, 60, 80);
+                btnPlayer2.ForeColor = Color.White;
+                int selectedIdx = _tabs.SelectedIndex;
+                _tabs.TabPages.Clear();
+                _tabs.TabPages.Add(tabArmy1);
+                _tabs.TabPages.Add(tabArt1);
+                _tabs.TabPages.Add(tabSpells1);
+                if (selectedIdx >= 0 && selectedIdx < _tabs.TabCount)
+                    _tabs.SelectedIndex = selectedIdx;
             };
-            tabSpells.Controls.Add(new Label
+
+            btnPlayer2.Click += (s, ev) =>
             {
-                Text = "В разработке...", ForeColor = Color.Gray,
-                Font = new Font("Segoe UI", 14), AutoSize = true, Location = new Point(20, 20),
-            });
-            _tabs.TabPages.Add(tabSpells);
+                btnPlayer2.BackColor = Color.FromArgb(255, 130, 130);
+                btnPlayer2.ForeColor = Color.Black;
+                btnPlayer1.BackColor = Color.FromArgb(60, 60, 80);
+                btnPlayer1.ForeColor = Color.White;
+                int selectedIdx = _tabs.SelectedIndex;
+                _tabs.TabPages.Clear();
+                _tabs.TabPages.Add(tabArmy2);
+                _tabs.TabPages.Add(tabArt2);
+                _tabs.TabPages.Add(tabSpells2);
+                if (selectedIdx >= 0 && selectedIdx < _tabs.TabCount)
+                    _tabs.SelectedIndex = selectedIdx;
+            };
         }
     }
 
@@ -930,8 +981,522 @@ namespace Launcher
     }
 
     /// <summary>
-    /// Окно с полными характеристиками юнита.
+    /// Вкладка артефактов: магазин (3 минора, 2 мажора, 1 реликвия) + слоты экипировки.
     /// </summary>
+    internal class ArtifactTab
+    {
+        private readonly TabPage _tab;
+        private readonly GoldState _gold;
+        private readonly List<ArtifactInfo> _allArtifacts;
+        private readonly Random _rng = new();
+
+        private const int RerollCost = 5000;
+
+        private static readonly string[] SlotNames =
+        {
+            "PRIMARY", "SECONDARY", "HEAD", "CHEST",
+            "NECK", "SHOULDERS", "FINGER 1", "FINGER 2",
+            "FEET", "MISCSLOT1",
+        };
+
+        private List<ArtifactInfo> _shopItems = new();
+        private readonly Dictionary<string, ArtifactInfo?> _equipped = new();
+        private Panel _shopPanel;
+        private Panel _slotsPanel;
+        private Label _goldLabel;
+
+        public ArtifactTab(TabPage tab, List<ArtifactInfo> allArtifacts, GoldState gold)
+        {
+            _tab = tab;
+            _gold = gold;
+            _allArtifacts = allArtifacts;
+
+            foreach (var slot in SlotNames)
+                _equipped[slot] = null;
+
+            BuildUI();
+            RollShop();
+            _gold.Changed += RefreshGold;
+        }
+
+        private void BuildUI()
+        {
+            _goldLabel = new Label
+            {
+                Parent = _tab,
+                Location = new Point(10, 8),
+                Size = new Size(300, 25),
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 220, 100),
+            };
+            RefreshGold();
+
+            // Магазин (левая часть)
+            _shopPanel = new DoubleBufferedPanel
+            {
+                Parent = _tab,
+                Location = new Point(10, 40),
+                Size = new Size(600, 610),
+                AutoScroll = true,
+                BackColor = Color.FromArgb(30, 30, 40),
+            };
+
+            // Слоты экипировки (правая часть)
+            _slotsPanel = new DoubleBufferedPanel
+            {
+                Parent = _tab,
+                Location = new Point(620, 40),
+                Size = new Size(490, 610),
+                BackColor = Color.FromArgb(35, 35, 50),
+                BorderStyle = BorderStyle.FixedSingle,
+                AutoScroll = true,
+            };
+        }
+
+        private void RollShop()
+        {
+            var minors = _allArtifacts.Where(a => a.Type == "ARTF_CLASS_MINOR").ToList();
+            var majors = _allArtifacts.Where(a => a.Type == "ARTF_CLASS_MAJOR").ToList();
+            var relics = _allArtifacts.Where(a => a.Type == "ARTF_CLASS_RELIC").ToList();
+
+            _shopItems.Clear();
+            _shopItems.AddRange(PickRandom(minors, 3));
+            _shopItems.AddRange(PickRandom(majors, 2));
+            _shopItems.AddRange(PickRandom(relics, 1));
+
+            RebuildShop();
+        }
+
+        private List<ArtifactInfo> PickRandom(List<ArtifactInfo> source, int count)
+        {
+            var shuffled = source.OrderBy(_ => _rng.Next()).ToList();
+            return shuffled.Take(Math.Min(count, shuffled.Count)).ToList();
+        }
+
+        private void RebuildShop()
+        {
+            _shopPanel.SuspendLayout();
+            foreach (Control c in _shopPanel.Controls)
+                c.Dispose();
+            _shopPanel.Controls.Clear();
+
+            var title = new Label
+            {
+                Parent = _shopPanel,
+                Text = "Магазин артефактов",
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                ForeColor = Color.White,
+                Location = new Point(5, 5),
+                AutoSize = true,
+            };
+
+            int y = 30;
+            string currentType = "";
+
+            foreach (var art in _shopItems.OrderBy(a => a.Type))
+            {
+                if (art.Type != currentType)
+                {
+                    currentType = art.Type;
+                    string typeLabel = currentType switch
+                    {
+                        "ARTF_CLASS_MINOR" => "Минорные",
+                        "ARTF_CLASS_MAJOR" => "Мажорные",
+                        "ARTF_CLASS_RELIC" => "Реликвии",
+                        _ => currentType,
+                    };
+                    var header = new Label
+                    {
+                        Parent = _shopPanel,
+                        Text = typeLabel,
+                        Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                        ForeColor = Color.FromArgb(200, 200, 100),
+                        Location = new Point(5, y),
+                        AutoSize = true,
+                    };
+                    y += 22;
+                }
+
+                var card = BuildArtifactCard(art, y);
+                card.Parent = _shopPanel;
+                y += card.Height + 4;
+            }
+
+            y += 10;
+
+            // Кнопка рерол
+            var btnReroll = new Button
+            {
+                Parent = _shopPanel,
+                Text = $"Рерол ({RerollCost}g)",
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                Size = new Size(180, 35),
+                Location = new Point(5, y),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(80, 60, 120),
+                ForeColor = Color.White,
+            };
+            btnReroll.FlatAppearance.BorderSize = 0;
+            btnReroll.Click += (s, ev) =>
+            {
+                if (!_gold.TrySpend(RerollCost))
+                {
+                    MessageBox.Show("Недостаточно золота!", "Рерол", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                RollShop();
+            };
+
+            _shopPanel.ResumeLayout();
+            RebuildSlots();
+        }
+
+        private Panel BuildArtifactCard(ArtifactInfo art, int yPos)
+        {
+            var card = new Panel
+            {
+                Location = new Point(0, yPos),
+                Size = new Size(575, 64),
+                BackColor = Color.FromArgb(42, 42, 60),
+                BorderStyle = BorderStyle.FixedSingle,
+                Cursor = Cursors.Hand,
+            };
+            card.DoubleClick += (s, e) => ShowArtifactDetail(art);
+
+            var icon = new PictureBox
+            {
+                Parent = card,
+                Location = new Point(2, 2),
+                Size = new Size(58, 58),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Image = art.Icon != null ? new Bitmap(art.Icon) : null,
+                BackColor = Color.FromArgb(35, 35, 50),
+                Cursor = Cursors.Hand,
+            };
+            icon.DoubleClick += (s, e) => ShowArtifactDetail(art);
+
+            var nameLbl = new Label
+            {
+                Parent = card,
+                Text = $"{art.Name}  —  {art.CostOfGold}g",
+                Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                ForeColor = art.Type == "ARTF_CLASS_RELIC" ? Color.FromArgb(255, 180, 50)
+                          : art.Type == "ARTF_CLASS_MAJOR" ? Color.FromArgb(180, 130, 255)
+                          : Color.White,
+                Location = new Point(66, 5),
+                AutoSize = true,
+                Cursor = Cursors.Hand,
+            };
+            nameLbl.DoubleClick += (s, e) => ShowArtifactDetail(art);
+
+            var typeLbl = new Label
+            {
+                Parent = card,
+                Text = art.TypeDisplay,
+                Font = new Font("Segoe UI", 8),
+                ForeColor = Color.LightGray,
+                Location = new Point(66, 25),
+                AutoSize = true,
+            };
+
+            // Выбор слота + кнопка купить
+            var cmbSlot = new ComboBox
+            {
+                Parent = card,
+                Location = new Point(330, 18),
+                Size = new Size(120, 25),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Font = new Font("Segoe UI", 8),
+                BackColor = Color.FromArgb(50, 50, 65),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+            };
+            foreach (var slot in SlotNames)
+                cmbSlot.Items.Add(slot);
+            cmbSlot.SelectedIndex = 0;
+
+            var btnBuy = new Button
+            {
+                Parent = card,
+                Text = "Купить",
+                Font = new Font("Segoe UI", 8, FontStyle.Bold),
+                Size = new Size(100, 28),
+                Location = new Point(460, 16),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(50, 110, 50),
+                ForeColor = Color.White,
+                Tag = new object[] { art, cmbSlot },
+            };
+            btnBuy.FlatAppearance.BorderSize = 0;
+            btnBuy.Click += BtnBuyArt_Click;
+
+            return card;
+        }
+
+        private void BtnBuyArt_Click(object? sender, EventArgs e)
+        {
+            var btn = sender as Button;
+            if (btn?.Tag is not object[] args) return;
+            var art = (ArtifactInfo)args[0];
+            var cmbSlot = (ComboBox)args[1];
+            string slotName = cmbSlot.SelectedItem?.ToString() ?? "";
+
+            if (string.IsNullOrEmpty(slotName)) return;
+
+            if (!_gold.TrySpend(art.CostOfGold))
+            {
+                MessageBox.Show("Недостаточно золота!", "Покупка", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            // Вернуть стоимость старого артефакта
+            var old = _equipped[slotName];
+            if (old != null)
+                _gold.Refund(old.CostOfGold);
+
+            _equipped[slotName] = art;
+            RebuildSlots();
+        }
+
+        private void RebuildSlots()
+        {
+            _slotsPanel.SuspendLayout();
+            foreach (Control c in _slotsPanel.Controls)
+                c.Dispose();
+            _slotsPanel.Controls.Clear();
+
+            var title = new Label
+            {
+                Parent = _slotsPanel,
+                Text = "Экипировка",
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                ForeColor = Color.White,
+                Location = new Point(10, 5),
+                AutoSize = true,
+            };
+
+            int y = 30;
+            foreach (var slot in SlotNames)
+            {
+                var slotPanel = new Panel
+                {
+                    Parent = _slotsPanel,
+                    Location = new Point(5, y),
+                    Size = new Size(470, 52),
+                    BackColor = Color.FromArgb(45, 45, 65),
+                    BorderStyle = BorderStyle.FixedSingle,
+                };
+
+                var lblSlot = new Label
+                {
+                    Parent = slotPanel,
+                    Text = slot,
+                    Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                    ForeColor = Color.Gray,
+                    Location = new Point(5, 15),
+                    Size = new Size(90, 20),
+                };
+
+                var equipped = _equipped[slot];
+                if (equipped != null)
+                {
+                    var icon = new PictureBox
+                    {
+                        Parent = slotPanel,
+                        Location = new Point(95, 2),
+                        Size = new Size(46, 46),
+                        SizeMode = PictureBoxSizeMode.Zoom,
+                        Image = equipped.Icon != null ? new Bitmap(equipped.Icon) : null,
+                        BackColor = Color.FromArgb(35, 35, 50),
+                        Cursor = Cursors.Hand,
+                    };
+                    icon.DoubleClick += (s, ev) => ShowArtifactDetail(equipped);
+
+                    var nameLbl = new Label
+                    {
+                        Parent = slotPanel,
+                        Text = equipped.Name,
+                        Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                        ForeColor = Color.White,
+                        Location = new Point(148, 5),
+                        AutoSize = true,
+                        Cursor = Cursors.Hand,
+                    };
+                    nameLbl.DoubleClick += (s, ev) => ShowArtifactDetail(equipped);
+
+                    var costLbl = new Label
+                    {
+                        Parent = slotPanel,
+                        Text = $"{equipped.CostOfGold}g  |  {equipped.TypeDisplay}",
+                        Font = new Font("Segoe UI", 8),
+                        ForeColor = Color.LightGray,
+                        Location = new Point(148, 25),
+                        AutoSize = true,
+                    };
+
+                    var btnRemove = new Button
+                    {
+                        Parent = slotPanel,
+                        Text = "Снять",
+                        Font = new Font("Segoe UI", 7),
+                        Size = new Size(55, 22),
+                        Location = new Point(410, 14),
+                        FlatStyle = FlatStyle.Flat,
+                        BackColor = Color.FromArgb(120, 50, 50),
+                        ForeColor = Color.White,
+                        Tag = slot,
+                    };
+                    btnRemove.FlatAppearance.BorderSize = 0;
+                    btnRemove.Click += BtnRemoveArt_Click;
+                }
+                else
+                {
+                    var emptyLbl = new Label
+                    {
+                        Parent = slotPanel,
+                        Text = "Пусто",
+                        Font = new Font("Segoe UI", 9),
+                        ForeColor = Color.DarkGray,
+                        Location = new Point(95, 15),
+                        AutoSize = true,
+                    };
+                }
+
+                y += 56;
+            }
+
+            _slotsPanel.ResumeLayout();
+        }
+
+        private void BtnRemoveArt_Click(object? sender, EventArgs e)
+        {
+            var btn = sender as Button;
+            if (btn?.Tag is not string slotName) return;
+
+            var art = _equipped[slotName];
+            if (art != null)
+            {
+                _gold.Refund(art.CostOfGold);
+                _equipped[slotName] = null;
+                RebuildSlots();
+            }
+        }
+
+        private void ShowArtifactDetail(ArtifactInfo art)
+        {
+            var form = new ArtifactDetailForm(art);
+            form.ShowDialog();
+        }
+
+        private void RefreshGold()
+        {
+            if (_goldLabel != null)
+                _goldLabel.Text = $"Золото: {_gold.Remaining} / {_gold.Total}";
+        }
+    }
+
+    /// <summary>
+    /// Окно деталей артефакта.
+    /// </summary>
+    internal class ArtifactDetailForm : Form
+    {
+        public ArtifactDetailForm(ArtifactInfo art)
+        {
+            Text = art.Name;
+            Size = new Size(450, 500);
+            StartPosition = FormStartPosition.CenterParent;
+            BackColor = Color.FromArgb(30, 30, 40);
+            ForeColor = Color.White;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            AutoScroll = true;
+
+            // Иконка
+            new PictureBox
+            {
+                Parent = this,
+                Location = new Point(15, 15),
+                Size = new Size(96, 96),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Image = art.Icon != null ? new Bitmap(art.Icon) : null,
+                BackColor = Color.FromArgb(35, 35, 50),
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+
+            // Название
+            new Label
+            {
+                Parent = this,
+                Text = art.Name,
+                Font = new Font("Segoe UI", 16, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                Location = new Point(125, 15),
+                AutoSize = true,
+            };
+
+            // Тип
+            new Label
+            {
+                Parent = this,
+                Text = art.TypeDisplay,
+                Font = new Font("Segoe UI", 10),
+                ForeColor = art.Type == "ARTF_CLASS_RELIC" ? Color.FromArgb(255, 180, 50)
+                          : art.Type == "ARTF_CLASS_MAJOR" ? Color.FromArgb(180, 130, 255)
+                          : Color.LightGray,
+                Location = new Point(125, 50),
+                AutoSize = true,
+            };
+
+            // Цена
+            new Label
+            {
+                Parent = this,
+                Text = $"Цена: {art.CostOfGold} золота",
+                Font = new Font("Segoe UI", 10),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                Location = new Point(125, 75),
+                AutoSize = true,
+            };
+
+            // ID
+            new Label
+            {
+                Parent = this,
+                Text = $"ID: {art.Id}",
+                Font = new Font("Segoe UI", 8),
+                ForeColor = Color.Gray,
+                Location = new Point(15, 120),
+                AutoSize = true,
+            };
+
+            // Описание
+            if (!string.IsNullOrEmpty(art.Description))
+            {
+                new Label
+                {
+                    Parent = this,
+                    Text = "Описание:",
+                    Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                    ForeColor = Color.White,
+                    Location = new Point(15, 145),
+                    AutoSize = true,
+                };
+
+                new Label
+                {
+                    Parent = this,
+                    Text = art.Description,
+                    Font = new Font("Segoe UI", 9),
+                    ForeColor = Color.White,
+                    Location = new Point(25, 170),
+                    AutoSize = true,
+                    MaximumSize = new Size(390, 0),
+                };
+            }
+        }
+    }
+
     internal class CreatureDetailForm : Form
     {
         public CreatureDetailForm(CreatureInfo creature)

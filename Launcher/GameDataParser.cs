@@ -44,6 +44,27 @@ namespace Launcher
     }
 
     /// <summary>
+    /// Данные артефакта, распарсенные из Artifacts.xdb.
+    /// </summary>
+    public class ArtifactInfo
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
+        public string Type { get; set; } = "";
+        public int CostOfGold { get; set; }
+        public Image? Icon { get; set; }
+
+        public string TypeDisplay => Type switch
+        {
+            "ARTF_CLASS_MINOR" => "Минорный",
+            "ARTF_CLASS_MAJOR" => "Мажорный",
+            "ARTF_CLASS_RELIC" => "Реликвия",
+            _ => Type,
+        };
+    }
+
+    /// <summary>
     /// Запись виртуальной файловой системы — файл из конкретного архива с датой.
     /// </summary>
     internal class VfsEntry
@@ -564,6 +585,121 @@ namespace Launcher
                     creature.Name = id;
 
                 result.Add(creature);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Парсит артефакты из Artifacts.xdb.
+        /// Возвращает только артефакты с CanBeGeneratedToSell == true.
+        /// </summary>
+        public List<ArtifactInfo> ParseArtifacts()
+        {
+            var result = new List<ArtifactInfo>();
+
+            var artifactsXdb = ReadXdb("/GameMechanics/RefTables/Artifacts.xdb");
+            if (artifactsXdb == null)
+                return result;
+
+            var items = artifactsXdb.Descendants("Item").ToList();
+
+            // Собираем пути для предзагрузки (имена, описания, иконки)
+            var preloadPaths = new List<string>();
+            var validItems = new List<XElement>();
+
+            foreach (var item in items)
+            {
+                string id = item.Element("ID")?.Value ?? "";
+                if (string.IsNullOrEmpty(id)) continue;
+
+                // Данные могут быть в <obj> или напрямую в <Item>
+                var data = item.Element("obj") ?? item;
+
+                string canSell = data.Element("CanBeGeneratedToSell")?.Value ?? "";
+                if (canSell != "true") continue;
+
+                validItems.Add(item);
+
+                string nameHref = data.Element("NameFileRef")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(nameHref))
+                    preloadPaths.Add(ExtractPath(nameHref));
+
+                string descHref = data.Element("DescriptionFileRef")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(descHref))
+                    preloadPaths.Add(ExtractPath(descHref));
+
+                string iconHref = data.Element("Icon")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(iconHref))
+                {
+                    string iconXdbPath = ExtractPath(iconHref);
+                    preloadPaths.Add(iconXdbPath);
+                }
+            }
+
+            PreloadFiles(preloadPaths);
+
+            // Предзагружаем DDS файлы из Texture.xdb
+            var ddsPaths = new List<string>();
+            foreach (var item in validItems)
+            {
+                var data = item.Element("obj") ?? item;
+                string iconHref = data.Element("Icon")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(iconHref))
+                {
+                    string iconXdbPath = ExtractPath(iconHref);
+                    var texXdb = ReadXdb(iconXdbPath);
+                    string destName = texXdb?.Root?.Element("DestName")?.Attribute("href")?.Value ?? "";
+                    if (!string.IsNullOrEmpty(destName))
+                        ddsPaths.Add(ResolvePath(iconXdbPath, destName));
+                }
+            }
+            PreloadFiles(ddsPaths);
+
+            foreach (var item in validItems)
+            {
+                string id = item.Element("ID")?.Value ?? "";
+                var data = item.Element("obj") ?? item;
+
+                string type = data.Element("Type")?.Value ?? "";
+                int cost = ParseInt(data, "CostOfGold");
+
+                var artifact = new ArtifactInfo
+                {
+                    Id = id,
+                    Type = type,
+                    CostOfGold = cost,
+                };
+
+                // Имя
+                string nameHref = data.Element("NameFileRef")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(nameHref))
+                {
+                    var nameData = ReadFile(ExtractPath(nameHref));
+                    if (nameData != null)
+                        artifact.Name = DetectAndDecode(nameData);
+                }
+                if (string.IsNullOrEmpty(artifact.Name))
+                    artifact.Name = id;
+
+                // Описание
+                string descHref = data.Element("DescriptionFileRef")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(descHref))
+                {
+                    var descData = ReadFile(ExtractPath(descHref));
+                    if (descData != null)
+                        artifact.Description = DetectAndDecode(descData);
+                }
+
+                // Иконка
+                string iconHref = data.Element("Icon")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(iconHref))
+                {
+                    string iconXdbPath = ExtractPath(iconHref);
+                    artifact.Icon = LoadDdsIcon(iconXdbPath);
+                }
+
+                result.Add(artifact);
             }
 
             return result;
