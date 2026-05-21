@@ -332,6 +332,15 @@ namespace Launcher
     /// <summary>
     /// Вкладка закупа армии одного игрока.
     /// </summary>
+    internal class DoubleBufferedPanel : Panel
+    {
+        public DoubleBufferedPanel()
+        {
+            DoubleBuffered = true;
+            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint, true);
+        }
+    }
+
     internal class ArmyPurchaseTab
     {
         private readonly TabPage _tab;
@@ -388,7 +397,7 @@ namespace Launcher
             RefreshGold();
 
             // Магазин юнитов (левая часть)
-            _shopPanel = new Panel
+            _shopPanel = new DoubleBufferedPanel
             {
                 Parent = _tab,
                 Location = new Point(10, 40),
@@ -398,7 +407,7 @@ namespace Launcher
             };
 
             // Армия (правая часть)
-            _armyPanel = new Panel
+            _armyPanel = new DoubleBufferedPanel
             {
                 Parent = _tab,
                 Location = new Point(640, 40),
@@ -452,6 +461,7 @@ namespace Launcher
         private void RefreshSlot(int index)
         {
             var panel = _slotPanels[index];
+            panel.SuspendLayout();
             // Удаляем всё кроме номера
             var toRemove = new List<Control>();
             foreach (Control c in panel.Controls)
@@ -479,6 +489,7 @@ namespace Launcher
                     AutoSize = true,
                 };
                 panel.BackColor = Color.FromArgb(45, 45, 65);
+                panel.ResumeLayout();
                 return;
             }
 
@@ -622,6 +633,7 @@ namespace Launcher
             };
             btnSell.FlatAppearance.BorderSize = 0;
             btnSell.Click += BtnSell_Click;
+            panel.ResumeLayout();
         }
 
         private void BtnUpgrade_Click(object? sender, EventArgs e)
@@ -711,6 +723,9 @@ namespace Launcher
 
         private void RebuildShop()
         {
+            _shopPanel.SuspendLayout();
+            foreach (Control c in _shopPanel.Controls)
+                c.Dispose();
             _shopPanel.Controls.Clear();
             int y = 0;
 
@@ -742,6 +757,7 @@ namespace Launcher
 
                 y += 8;
             }
+            _shopPanel.ResumeLayout();
         }
 
         private Panel BuildCreatureCard(CreatureInfo creature, TierPool pool, int yPos)
