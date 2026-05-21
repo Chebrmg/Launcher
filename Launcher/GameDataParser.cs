@@ -64,6 +64,29 @@ namespace Launcher
             _ => Type,
         };
 
+        private static readonly Dictionary<string, string> SlotDisplayMap = new()
+        {
+            { "PRIMARY", "Меч" },
+            { "SECONDARY", "Щит" },
+            { "HEAD", "Корона" },
+            { "CHEST", "Кираса" },
+            { "NECK", "Ожерелье" },
+            { "SHOULDERS", "Плащ" },
+            { "FINGER", "Кольцо" },
+            { "FEET", "Сапоги" },
+            { "MISCSLOT1", "Карман" },
+        };
+
+        public string SlotDisplayRu
+        {
+            get
+            {
+                string eng = SlotDisplay;
+                if (SlotDisplayMap.TryGetValue(eng, out var ru)) return ru;
+                return eng;
+            }
+        }
+
         private static readonly Dictionary<string, string> SlotMap = new()
         {
             { "ARTF_SLOT_SWORD", "PRIMARY" },
@@ -104,14 +127,14 @@ namespace Launcher
         // Маппинг CreatureTown → человекочитаемое название фракции
         private static readonly Dictionary<string, string> TownToFaction = new()
         {
-            { "TOWN_HEAVEN", "Haven" },
-            { "TOWN_INFERNO", "Inferno" },
-            { "TOWN_NECROMANCY", "Necropolis" },
-            { "TOWN_PRESERVE", "Sylvan" },
-            { "TOWN_ACADEMY", "Academy" },
-            { "TOWN_DUNGEON", "Dungeon" },
-            { "TOWN_FORTRESS", "Fortress" },
-            { "TOWN_STRONGHOLD", "Stronghold" },
+            { "TOWN_HEAVEN", "Орден Света" },
+            { "TOWN_INFERNO", "Инферно" },
+            { "TOWN_NECROMANCY", "Некрополис" },
+            { "TOWN_PRESERVE", "Лесной Союз" },
+            { "TOWN_ACADEMY", "Академия" },
+            { "TOWN_DUNGEON", "Лига Теней" },
+            { "TOWN_FORTRESS", "Северные Кланы" },
+            { "TOWN_STRONGHOLD", "Великая Орда" },
             { "TOWN_NO_TYPE", "Нейтралы" },
             { "TOWN_NONE", "Нейтралы" },
         };
@@ -119,41 +142,41 @@ namespace Launcher
         // Маппинг папки в Creatures.xdb → фракция (для определения фракции по пути)
         private static readonly Dictionary<string, string> PathToFaction = new()
         {
-            { "Haven", "Haven" },
-            { "Inferno", "Inferno" },
-            { "Necropolis", "Necropolis" },
-            { "Preserve", "Sylvan" },
-            { "Academy", "Academy" },
-            { "Dungeon", "Dungeon" },
-            { "Dwarf", "Fortress" },
-            { "Orcs", "Stronghold" },
+            { "Haven", "Орден Света" },
+            { "Inferno", "Инферно" },
+            { "Necropolis", "Некрополис" },
+            { "Preserve", "Лесной Союз" },
+            { "Academy", "Академия" },
+            { "Dungeon", "Лига Теней" },
+            { "Dwarf", "Северные Кланы" },
+            { "Orcs", "Великая Орда" },
             { "Neutrals", "Нейтралы" },
         };
 
         public static readonly string[] FactionOrder =
         {
-            "Haven", "Inferno", "Necropolis", "Sylvan",
-            "Academy", "Dungeon", "Fortress", "Stronghold", "Нейтралы"
+            "Орден Света", "Инферно", "Некрополис", "Лесной Союз",
+            "Академия", "Лига Теней", "Северные Кланы", "Великая Орда", "Нейтралы"
         };
 
         // Фракции для выбора (без нейтралов)
         public static readonly string[] SelectableFactions =
         {
-            "Haven", "Inferno", "Necropolis", "Sylvan",
-            "Academy", "Dungeon", "Fortress", "Stronghold"
+            "Орден Света", "Инферно", "Некрополис", "Лесной Союз",
+            "Академия", "Лига Теней", "Северные Кланы", "Великая Орда"
         };
 
         // Фракция → сегменты пути для фильтрации в Creatures.xdb
         public static readonly Dictionary<string, string[]> FactionPathSegments = new()
         {
-            { "Haven", new[] { "/Haven/" } },
-            { "Inferno", new[] { "/Inferno/" } },
-            { "Necropolis", new[] { "/Necropolis/" } },
-            { "Sylvan", new[] { "/Preserve/" } },
-            { "Academy", new[] { "/Academy/" } },
-            { "Dungeon", new[] { "/Dungeon/" } },
-            { "Fortress", new[] { "/Dwarf/" } },
-            { "Stronghold", new[] { "/Orcs/" } },
+            { "Орден Света", new[] { "/Haven/" } },
+            { "Инферно", new[] { "/Inferno/" } },
+            { "Некрополис", new[] { "/Necropolis/" } },
+            { "Лесной Союз", new[] { "/Preserve/" } },
+            { "Академия", new[] { "/Academy/" } },
+            { "Лига Теней", new[] { "/Dungeon/" } },
+            { "Северные Кланы", new[] { "/Dwarf/" } },
+            { "Великая Орда", new[] { "/Orcs/" } },
         };
 
         public int VfsCount => _vfs.Count;
