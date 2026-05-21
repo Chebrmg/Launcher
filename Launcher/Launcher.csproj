@@ -10,6 +10,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Pfim" Version="0.11.2" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Remove="bg.jpg" />
   </ItemGroup>
 
