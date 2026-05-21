@@ -1087,6 +1087,29 @@ namespace Launcher
                 SaveUserModsConfig();
             };
 
+            // КНОПКА ПАРСЕР
+            Button btnParser = new Button();
+            btnParser.Parent = panel;
+            btnParser.Text = "Парсер";
+            btnParser.FlatStyle = FlatStyle.Flat;
+            btnParser.FlatAppearance.BorderSize = 0;
+            btnParser.BackColor = Color.FromArgb(40, 40, 60);
+            btnParser.ForeColor = Color.White;
+            btnParser.Font = new Font("Segoe UI", 9, FontStyle.Regular);
+            btnParser.Size = new Size(80, 28);
+            btnParser.Location = new Point(210, 335);
+            btnParser.Click += (s, ev) =>
+            {
+                if (string.IsNullOrEmpty(gamePath))
+                {
+                    MessageBox.Show("Сначала укажите путь к игре!", "Парсер",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                var form = new GameParserForm(gamePath);
+                form.ShowDialog(this);
+            };
+
             // КНОПКА ОБНОВИТЬ ЛАУНЧЕР (скрыта по умолчанию)
             btnUpdateLauncher = new Button();
             btnUpdateLauncher.Parent = panel;
@@ -1128,6 +1151,7 @@ namespace Launcher
             SetHoverHint(btnAutoSave, "Мониторинг и копирование автосохранений игры");
             SetHoverHint(btnSetPath, "Указать папку с игрой");
             SetHoverHint(btnUserMods, "Открыть редактор пользовательских модов");
+            SetHoverHint(btnParser, "Парсер игровых данных: юниты, артефакты, заклинания");
 
             // Показываем текущий путь к игре
             if (!string.IsNullOrEmpty(gamePath))
