@@ -766,56 +766,39 @@ namespace Launcher
             var card = new Panel
             {
                 Location = new Point(0, yPos),
-                Size = new Size(595, 70),
+                Size = new Size(595, 44),
                 BackColor = Color.FromArgb(42, 42, 60),
                 BorderStyle = BorderStyle.FixedSingle,
+                Cursor = Cursors.Hand,
             };
+            card.DoubleClick += (s, e) => ShowCreatureDetail(creature);
 
             // Иконка
             var icon = new PictureBox
             {
                 Parent = card,
-                Location = new Point(3, 3),
-                Size = new Size(64, 64),
+                Location = new Point(2, 2),
+                Size = new Size(38, 38),
                 SizeMode = PictureBoxSizeMode.Zoom,
                 Image = creature.Icon != null ? new Bitmap(creature.Icon) : null,
                 BackColor = Color.FromArgb(35, 35, 50),
+                Cursor = Cursors.Hand,
             };
+            icon.DoubleClick += (s, e) => ShowCreatureDetail(creature);
 
-            // Имя
+            // Имя + цена
             string gradeTag = creature.IsBase ? "" : " ★";
             var nameLbl = new Label
             {
                 Parent = card,
-                Text = creature.Name + gradeTag,
+                Text = $"{creature.Name}{gradeTag}  —  {creature.Gold}g",
                 Font = new Font("Segoe UI", 9, FontStyle.Bold),
                 ForeColor = creature.IsBase ? Color.White : Color.FromArgb(100, 255, 100),
-                Location = new Point(72, 3),
+                Location = new Point(46, 11),
                 AutoSize = true,
+                Cursor = Cursors.Hand,
             };
-
-            // Статы
-            string shots = creature.Shots > 0 ? $" Выс:{creature.Shots}" : "";
-            var statsLbl = new Label
-            {
-                Parent = card,
-                Text = $"А:{creature.AttackSkill} З:{creature.DefenceSkill} У:{creature.MinDamage}-{creature.MaxDamage} HP:{creature.Health} С:{creature.Speed} И:{creature.Initiative}{shots}",
-                Font = new Font("Segoe UI", 8),
-                ForeColor = Color.LightGray,
-                Location = new Point(72, 22),
-                AutoSize = true,
-            };
-
-            // Цена
-            var priceLbl = new Label
-            {
-                Parent = card,
-                Text = $"Цена: {creature.Gold}g",
-                Font = new Font("Segoe UI", 8, FontStyle.Bold),
-                ForeColor = Color.FromArgb(255, 220, 100),
-                Location = new Point(72, 42),
-                AutoSize = true,
-            };
+            nameLbl.DoubleClick += (s, e) => ShowCreatureDetail(creature);
 
             // Кнопка купить (с NumericUpDown для количества)
             bool canBuy = pool.Available > 0;
@@ -837,7 +820,7 @@ namespace Launcher
                 var nud = new NumericUpDown
                 {
                     Parent = card,
-                    Location = new Point(420, 20),
+                    Location = new Point(420, 8),
                     Size = new Size(60, 25),
                     Minimum = 1,
                     Maximum = maxBuy,
@@ -853,7 +836,7 @@ namespace Launcher
                     Text = "Купить",
                     Font = new Font("Segoe UI", 8, FontStyle.Bold),
                     Size = new Size(95, 28),
-                    Location = new Point(490, 18),
+                    Location = new Point(490, 7),
                     FlatStyle = FlatStyle.Flat,
                     BackColor = Color.FromArgb(50, 110, 50),
                     ForeColor = Color.White,
@@ -870,7 +853,7 @@ namespace Launcher
                     Text = !hasSlot ? "Нет слотов" : "Нет в пуле",
                     Font = new Font("Segoe UI", 8),
                     ForeColor = Color.DarkGray,
-                    Location = new Point(490, 25),
+                    Location = new Point(490, 12),
                     AutoSize = true,
                 };
             }
@@ -937,6 +920,140 @@ namespace Launcher
         {
             if (_goldLabel != null)
                 _goldLabel.Text = $"Золото: {_gold.Remaining} / {_gold.Total}";
+        }
+
+        private void ShowCreatureDetail(CreatureInfo creature)
+        {
+            var form = new CreatureDetailForm(creature);
+            form.ShowDialog();
+        }
+    }
+
+    /// <summary>
+    /// Окно с полными характеристиками юнита.
+    /// </summary>
+    internal class CreatureDetailForm : Form
+    {
+        public CreatureDetailForm(CreatureInfo creature)
+        {
+            Text = creature.Name;
+            Size = new Size(420, 500);
+            StartPosition = FormStartPosition.CenterParent;
+            BackColor = Color.FromArgb(30, 30, 40);
+            ForeColor = Color.White;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+
+            // Иконка
+            new PictureBox
+            {
+                Parent = this,
+                Location = new Point(15, 15),
+                Size = new Size(96, 96),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Image = creature.Icon != null ? new Bitmap(creature.Icon) : null,
+                BackColor = Color.FromArgb(35, 35, 50),
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+
+            // Имя
+            new Label
+            {
+                Parent = this,
+                Text = creature.Name,
+                Font = new Font("Segoe UI", 16, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                Location = new Point(125, 15),
+                AutoSize = true,
+            };
+
+            // Грейд/Базовый
+            new Label
+            {
+                Parent = this,
+                Text = creature.IsBase ? "Базовый юнит" : "Грейд ★",
+                Font = new Font("Segoe UI", 9),
+                ForeColor = creature.IsBase ? Color.Gray : Color.FromArgb(100, 255, 100),
+                Location = new Point(125, 50),
+                AutoSize = true,
+            };
+
+            // Фракция + Тир
+            new Label
+            {
+                Parent = this,
+                Text = $"Фракция: {creature.Faction}  |  Тир: {creature.CreatureTier}",
+                Font = new Font("Segoe UI", 9),
+                ForeColor = Color.LightGray,
+                Location = new Point(125, 70),
+                AutoSize = true,
+            };
+
+            // Статы
+            int y = 125;
+            var statsLines = new List<string>
+            {
+                $"Атака: {creature.AttackSkill}",
+                $"Защита: {creature.DefenceSkill}",
+                $"Урон: {creature.MinDamage}-{creature.MaxDamage}",
+                $"HP: {creature.Health}",
+                $"Скорость: {creature.Speed}",
+                $"Инициатива: {creature.Initiative}",
+            };
+            if (creature.Shots > 0)
+                statsLines.Add($"Выстрелы: {creature.Shots}");
+            if (creature.Flying)
+                statsLines.Add("Летает");
+            statsLines.Add($"Золото: {creature.Gold}");
+            statsLines.Add($"Рост в неделю: {creature.WeeklyGrowth}");
+
+            new Label
+            {
+                Parent = this,
+                Text = "Характеристики:",
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                ForeColor = Color.White,
+                Location = new Point(15, y),
+                AutoSize = true,
+            };
+            y += 22;
+
+            new Label
+            {
+                Parent = this,
+                Text = string.Join("\n", statsLines),
+                Font = new Font("Segoe UI", 9),
+                ForeColor = Color.White,
+                Location = new Point(25, y),
+                Size = new Size(370, 170),
+            };
+            y += statsLines.Count * 17 + 10;
+
+            // Способности
+            if (creature.Abilities.Count > 0)
+            {
+                new Label
+                {
+                    Parent = this,
+                    Text = "Способности:",
+                    Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                    ForeColor = Color.FromArgb(180, 255, 180),
+                    Location = new Point(15, y),
+                    AutoSize = true,
+                };
+                y += 22;
+
+                new Label
+                {
+                    Parent = this,
+                    Text = string.Join("\n", creature.Abilities.Select(a => "  " + a)),
+                    Font = new Font("Segoe UI", 9),
+                    ForeColor = Color.FromArgb(180, 255, 180),
+                    Location = new Point(25, y),
+                    Size = new Size(370, creature.Abilities.Count * 17 + 5),
+                };
+            }
         }
     }
 }
