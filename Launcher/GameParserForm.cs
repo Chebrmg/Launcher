@@ -1556,8 +1556,23 @@ namespace Launcher
                 AutoSize = true,
             };
 
-            // Статы
+            // Характеристики
             int y = 125;
+
+            var headerFont = new Font("Segoe UI", 10, FontStyle.Bold);
+            var statFont = new Font("Segoe UI", 10);
+
+            var headerLabel = new Label
+            {
+                Parent = this,
+                Text = "Характеристики:",
+                Font = headerFont,
+                ForeColor = Color.White,
+                Location = new Point(15, y),
+                AutoSize = true,
+            };
+            y += headerLabel.PreferredHeight + 4;
+
             var statsLines = new List<string>
             {
                 $"Атака: {creature.AttackSkill}",
@@ -1574,48 +1589,47 @@ namespace Launcher
             statsLines.Add($"Золото: {creature.Gold}");
             statsLines.Add($"Рост в неделю: {creature.WeeklyGrowth}");
 
-            new Label
-            {
-                Parent = this,
-                Text = "Характеристики:",
-                Font = new Font("Segoe UI", 10, FontStyle.Bold),
-                ForeColor = Color.White,
-                Location = new Point(15, y),
-                AutoSize = true,
-            };
-            y += 22;
-
-            new Label
+            var statsLabel = new Label
             {
                 Parent = this,
                 Text = string.Join("\n", statsLines),
-                Font = new Font("Segoe UI", 10),
+                Font = statFont,
                 ForeColor = Color.White,
                 Location = new Point(25, y),
                 AutoSize = true,
                 MaximumSize = new Size(390, 0),
             };
-            y += statsLines.Count * 20 + 15;
+            y += statsLabel.PreferredHeight + 10;
+
+            // Разделитель
+            new Panel
+            {
+                Parent = this,
+                Location = new Point(15, y),
+                Size = new Size(400, 1),
+                BackColor = Color.FromArgb(80, 80, 100),
+            };
+            y += 10;
 
             // Способности
             if (creature.Abilities.Count > 0)
             {
-                new Label
+                var abilitiesHeader = new Label
                 {
                     Parent = this,
                     Text = "Способности:",
-                    Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                    Font = headerFont,
                     ForeColor = Color.FromArgb(180, 255, 180),
                     Location = new Point(15, y),
                     AutoSize = true,
                 };
-                y += 22;
+                y += abilitiesHeader.PreferredHeight + 4;
 
                 new Label
                 {
                     Parent = this,
                     Text = string.Join("\n", creature.Abilities.Select(a => "  " + a)),
-                    Font = new Font("Segoe UI", 10),
+                    Font = statFont,
                     ForeColor = Color.FromArgb(180, 255, 180),
                     Location = new Point(25, y),
                     AutoSize = true,
