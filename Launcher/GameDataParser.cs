@@ -91,6 +91,7 @@ namespace Launcher
         };
 
         public int VfsCount => _vfs.Count;
+        public string DiagInfo { get; private set; } = "";
 
         public GameDataParser(string gameRoot)
         {
@@ -115,16 +116,24 @@ namespace Launcher
             if (Directory.Exists(userModsDir))
                 archives.AddRange(Directory.GetFiles(userModsDir, "*.h5u"));
 
+            var diagLines = new List<string>();
+            diagLines.Add($"Путь: {_gameRoot}");
+            diagLines.Add($"data/: {(Directory.Exists(Path.Combine(_gameRoot, "data")) ? "есть" : "НЕТ")}");
+            diagLines.Add($"Архивов найдено: {archives.Count}");
+
             foreach (string archivePath in archives)
             {
+                string archiveName = Path.GetFileName(archivePath);
                 try
                 {
                     using var zip = ZipFile.OpenRead(archivePath);
+                    int entryCount = 0;
                     foreach (var entry in zip.Entries)
                     {
                         if (string.IsNullOrEmpty(entry.Name))
                             continue;
 
+                        entryCount++;
                         // Нормализуем путь: обратные слэши → прямые, всегда с / в начале
                         string normalizedPath = "/" + entry.FullName.Replace('\\', '/').TrimStart('/');
 
@@ -139,9 +148,18 @@ namespace Launcher
                             };
                         }
                     }
+                    diagLines.Add($"{archiveName}: {entryCount} файлов");
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    diagLines.Add($"{archiveName}: ОШИБКА — {ex.Message}");
+                }
             }
+
+            bool hasCreatures = _vfs.ContainsKey("/GameMechanics/RefTables/Creatures.xdb");
+            diagLines.Add($"Creatures.xdb: {(hasCreatures ? "найден" : "НЕ НАЙДЕН")}");
+
+            DiagInfo = string.Join("\n", diagLines);
         }
 
         /// <summary>
