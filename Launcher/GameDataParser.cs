@@ -447,7 +447,7 @@ namespace Launcher
                             var nameData = ReadFile(namePath);
                             if (nameData != null)
                             {
-                                creature.Name = System.Text.Encoding.UTF8.GetString(nameData).Trim().Trim('\uFEFF');
+                                creature.Name = DetectAndDecode(nameData);
                             }
                         }
 
@@ -553,6 +553,37 @@ namespace Launcher
             {
                 return null;
             }
+        }
+
+        /// <summary>
+        /// Определяет кодировку текстового файла по BOM и декодирует.
+        /// </summary>
+        private static string DetectAndDecode(byte[] data)
+        {
+            // UTF-16 LE BOM: FF FE
+            if (data.Length >= 2 && data[0] == 0xFF && data[1] == 0xFE)
+                return System.Text.Encoding.Unicode.GetString(data).Trim().Trim('\uFEFF');
+
+            // UTF-16 BE BOM: FE FF
+            if (data.Length >= 2 && data[0] == 0xFE && data[1] == 0xFF)
+                return System.Text.Encoding.BigEndianUnicode.GetString(data).Trim().Trim('\uFEFF');
+
+            // UTF-8 BOM: EF BB BF
+            if (data.Length >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF)
+                return System.Text.Encoding.UTF8.GetString(data).Trim().Trim('\uFEFF');
+
+            // Нет BOM — проверяем на UTF-16 LE (частые нулевые байты)
+            if (data.Length >= 4)
+            {
+                int nullCount = 0;
+                for (int i = 1; i < Math.Min(data.Length, 20); i += 2)
+                    if (data[i] == 0) nullCount++;
+                if (nullCount > 2)
+                    return System.Text.Encoding.Unicode.GetString(data).Trim();
+            }
+
+            // Fallback: UTF-8
+            return System.Text.Encoding.UTF8.GetString(data).Trim();
         }
 
         private static int ParseInt(XElement? parent, string elementName)
