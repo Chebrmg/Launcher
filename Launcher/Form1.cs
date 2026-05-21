@@ -1100,13 +1100,14 @@ namespace Launcher
             btnParser.Location = new Point(210, 335);
             btnParser.Click += (s, ev) =>
             {
-                if (string.IsNullOrEmpty(gamePath))
+                string parserRoot = GetGameRoot();
+                if (string.IsNullOrEmpty(parserRoot) || !Directory.Exists(parserRoot))
                 {
                     MessageBox.Show("Сначала укажите путь к игре!", "Парсер",
                         MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return;
                 }
-                var form = new GameParserForm(gamePath);
+                var form = new GameParserForm(parserRoot);
                 form.ShowDialog(this);
             };
 

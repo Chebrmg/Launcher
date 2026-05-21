@@ -90,6 +90,8 @@ namespace Launcher
             "Academy", "Dungeon", "Fortress", "Stronghold", "Нейтралы"
         };
 
+        public int VfsCount => _vfs.Count;
+
         public GameDataParser(string gameRoot)
         {
             _gameRoot = gameRoot;
@@ -123,8 +125,8 @@ namespace Launcher
                         if (string.IsNullOrEmpty(entry.Name))
                             continue;
 
-                        // Нормализуем путь: всегда с / в начале
-                        string normalizedPath = "/" + entry.FullName.TrimStart('/');
+                        // Нормализуем путь: обратные слэши → прямые, всегда с / в начале
+                        string normalizedPath = "/" + entry.FullName.Replace('\\', '/').TrimStart('/');
 
                         if (!_vfs.ContainsKey(normalizedPath) ||
                             entry.LastWriteTime > _vfs[normalizedPath].LastModified)
@@ -147,7 +149,7 @@ namespace Launcher
         /// </summary>
         private byte[]? ReadFile(string virtualPath)
         {
-            string normalized = "/" + virtualPath.TrimStart('/');
+            string normalized = "/" + virtualPath.Replace('\\', '/').TrimStart('/');
             if (!_vfs.TryGetValue(normalized, out var vfsEntry))
                 return null;
 
