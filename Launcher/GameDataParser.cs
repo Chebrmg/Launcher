@@ -52,6 +52,7 @@ namespace Launcher
         public string Name { get; set; } = "";
         public string Description { get; set; } = "";
         public string Type { get; set; } = "";
+        public string Slot { get; set; } = "";
         public int CostOfGold { get; set; }
         public Image? Icon { get; set; }
 
@@ -62,6 +63,21 @@ namespace Launcher
             "ARTF_CLASS_RELIC" => "Реликвия",
             _ => Type,
         };
+
+        private static readonly Dictionary<string, string> SlotMap = new()
+        {
+            { "ARTF_SLOT_SWORD", "PRIMARY" },
+            { "ARTF_SLOT_SHIELD", "SECONDARY" },
+            { "ARTF_SLOT_HELM", "HEAD" },
+            { "ARTF_SLOT_ARMOR", "CHEST" },
+            { "ARTF_SLOT_NECK", "NECK" },
+            { "ARTF_SLOT_RING", "FINGER" },
+            { "ARTF_SLOT_FEET", "FEET" },
+            { "ARTF_SLOT_CAPE", "SHOULDERS" },
+            { "ARTF_SLOT_MISC", "MISCSLOT1" },
+        };
+
+        public string SlotDisplay => SlotMap.TryGetValue(Slot, out var s) ? s : Slot;
     }
 
     /// <summary>
@@ -664,10 +680,13 @@ namespace Launcher
                 string type = data.Element("Type")?.Value ?? "";
                 int cost = ParseInt(data, "CostOfGold");
 
+                string slot = data.Element("Slot")?.Value ?? "";
+
                 var artifact = new ArtifactInfo
                 {
                     Id = id,
                     Type = type,
+                    Slot = slot,
                     CostOfGold = cost,
                 };
 
@@ -677,7 +696,7 @@ namespace Launcher
                 {
                     var nameData = ReadFile(ExtractPath(nameHref));
                     if (nameData != null)
-                        artifact.Name = DetectAndDecode(nameData);
+                        artifact.Name = StripTags(DetectAndDecode(nameData));
                 }
                 if (string.IsNullOrEmpty(artifact.Name))
                     artifact.Name = id;
@@ -688,7 +707,7 @@ namespace Launcher
                 {
                     var descData = ReadFile(ExtractPath(descHref));
                     if (descData != null)
-                        artifact.Description = DetectAndDecode(descData);
+                        artifact.Description = StripTags(DetectAndDecode(descData));
                 }
 
                 // Иконка
@@ -819,6 +838,14 @@ namespace Launcher
 
             // Fallback: UTF-8
             return System.Text.Encoding.UTF8.GetString(data).Trim();
+        }
+
+        /// <summary>
+        /// Удаляет HTML/XML-подобные теги из текста.
+        /// </summary>
+        private static string StripTags(string text)
+        {
+            return System.Text.RegularExpressions.Regex.Replace(text, "<[^>]+>", "").Trim();
         }
 
         private static int ParseInt(XElement? parent, string elementName)

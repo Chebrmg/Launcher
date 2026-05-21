@@ -1192,28 +1192,12 @@ namespace Launcher
             var typeLbl = new Label
             {
                 Parent = card,
-                Text = art.TypeDisplay,
+                Text = $"{art.TypeDisplay}  |  Слот: {art.SlotDisplay}",
                 Font = new Font("Segoe UI", 8),
                 ForeColor = Color.LightGray,
                 Location = new Point(66, 25),
                 AutoSize = true,
             };
-
-            // Выбор слота + кнопка купить
-            var cmbSlot = new ComboBox
-            {
-                Parent = card,
-                Location = new Point(330, 18),
-                Size = new Size(120, 25),
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Font = new Font("Segoe UI", 8),
-                BackColor = Color.FromArgb(50, 50, 65),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-            };
-            foreach (var slot in SlotNames)
-                cmbSlot.Items.Add(slot);
-            cmbSlot.SelectedIndex = 0;
 
             var btnBuy = new Button
             {
@@ -1225,7 +1209,7 @@ namespace Launcher
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(50, 110, 50),
                 ForeColor = Color.White,
-                Tag = new object[] { art, cmbSlot },
+                Tag = art,
             };
             btnBuy.FlatAppearance.BorderSize = 0;
             btnBuy.Click += BtnBuyArt_Click;
@@ -1236,12 +1220,14 @@ namespace Launcher
         private void BtnBuyArt_Click(object? sender, EventArgs e)
         {
             var btn = sender as Button;
-            if (btn?.Tag is not object[] args) return;
-            var art = (ArtifactInfo)args[0];
-            var cmbSlot = (ComboBox)args[1];
-            string slotName = cmbSlot.SelectedItem?.ToString() ?? "";
+            if (btn?.Tag is not ArtifactInfo art) return;
 
-            if (string.IsNullOrEmpty(slotName)) return;
+            string slotName = ResolveSlot(art);
+            if (string.IsNullOrEmpty(slotName))
+            {
+                MessageBox.Show("Нет подходящего слота!", "Покупка", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
 
             if (!_gold.TrySpend(art.CostOfGold))
             {
@@ -1249,13 +1235,27 @@ namespace Launcher
                 return;
             }
 
-            // Вернуть стоимость старого артефакта
             var old = _equipped[slotName];
             if (old != null)
                 _gold.Refund(old.CostOfGold);
 
             _equipped[slotName] = art;
             RebuildSlots();
+        }
+
+        private string ResolveSlot(ArtifactInfo art)
+        {
+            string display = art.SlotDisplay;
+            if (display == "FINGER")
+            {
+                // Два слота кольца: первый свободный или первый
+                if (_equipped["FINGER 1"] == null) return "FINGER 1";
+                if (_equipped["FINGER 2"] == null) return "FINGER 2";
+                return "FINGER 1";
+            }
+            if (_equipped.ContainsKey(display))
+                return display;
+            return "";
         }
 
         private void RebuildSlots()
