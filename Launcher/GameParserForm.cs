@@ -992,6 +992,20 @@ namespace Launcher
 
         private const int RerollCost = 5000;
 
+        private static readonly Dictionary<string, string> SlotRuNames = new()
+        {
+            { "PRIMARY", "Меч" },
+            { "SECONDARY", "Щит" },
+            { "HEAD", "Корона" },
+            { "CHEST", "Кираса" },
+            { "NECK", "Ожерелье" },
+            { "SHOULDERS", "Плащ" },
+            { "FINGER 1", "Кольцо 1" },
+            { "FINGER 2", "Кольцо 2" },
+            { "FEET", "Сапоги" },
+            { "MISCSLOT1", "Карман" },
+        };
+
         private static readonly string[] SlotNames =
         {
             "PRIMARY", "SECONDARY", "HEAD", "CHEST",
@@ -1169,32 +1183,14 @@ namespace Launcher
             };
 
             int y = 30;
-            string currentType = "";
 
-            foreach (var art in _shopItems.OrderBy(a => a.Type))
+            // Порядок: мажоры, миноры, реликвии
+            var ordered = _shopItems
+                .OrderBy(a => a.Type == "ARTF_CLASS_MAJOR" ? 0 : a.Type == "ARTF_CLASS_MINOR" ? 1 : 2)
+                .ToList();
+
+            foreach (var art in ordered)
             {
-                if (art.Type != currentType)
-                {
-                    currentType = art.Type;
-                    string typeLabel = currentType switch
-                    {
-                        "ARTF_CLASS_MINOR" => "Минорные",
-                        "ARTF_CLASS_MAJOR" => "Мажорные",
-                        "ARTF_CLASS_RELIC" => "Реликвии",
-                        _ => currentType,
-                    };
-                    var header = new Label
-                    {
-                        Parent = _shopPanel,
-                        Text = typeLabel,
-                        Font = new Font("Segoe UI", 9, FontStyle.Bold),
-                        ForeColor = Color.FromArgb(200, 200, 100),
-                        Location = new Point(5, y),
-                        AutoSize = true,
-                    };
-                    y += 22;
-                }
-
                 var card = BuildArtifactCard(art, y);
                 card.Parent = _shopPanel;
                 y += card.Height + 4;
@@ -1258,9 +1254,9 @@ namespace Launcher
                 Parent = card,
                 Text = $"{art.Name}  —  {art.CostOfGold}g",
                 Font = new Font("Segoe UI", 9, FontStyle.Bold),
-                ForeColor = art.Type == "ARTF_CLASS_RELIC" ? Color.FromArgb(255, 180, 50)
+                ForeColor = art.Type == "ARTF_CLASS_RELIC" ? Color.FromArgb(198, 100, 99)
                           : art.Type == "ARTF_CLASS_MAJOR" ? Color.FromArgb(180, 130, 255)
-                          : Color.White,
+                          : Color.FromArgb(253, 201, 152),
                 Location = new Point(66, 5),
                 AutoSize = true,
                 Cursor = Cursors.Hand,
@@ -1270,7 +1266,7 @@ namespace Launcher
             var typeLbl = new Label
             {
                 Parent = card,
-                Text = $"{art.TypeDisplay}  |  Слот: {art.SlotDisplay}",
+                Text = $"Слот: {art.SlotDisplayRu}",
                 Font = new Font("Segoe UI", 8),
                 ForeColor = Color.LightGray,
                 Location = new Point(66, 25),
@@ -1345,9 +1341,10 @@ namespace Launcher
 
                 var equipped = _equipped[slot];
                 pb.Image = equipped?.Icon != null ? new Bitmap(equipped.Icon) : null;
+                string ruName = SlotRuNames.TryGetValue(slot, out var rn) ? rn : slot;
                 _slotTip.SetToolTip(pb, equipped != null
-                    ? $"{slot}: {equipped.Name}\n{equipped.TypeDisplay}  |  {equipped.CostOfGold}g"
-                    : slot);
+                    ? $"{ruName}: {equipped.Name}\n{equipped.CostOfGold}g"
+                    : ruName);
             }
         }
 
@@ -1410,9 +1407,9 @@ namespace Launcher
                 Parent = this,
                 Text = art.TypeDisplay,
                 Font = new Font("Segoe UI", 10),
-                ForeColor = art.Type == "ARTF_CLASS_RELIC" ? Color.FromArgb(255, 180, 50)
+                ForeColor = art.Type == "ARTF_CLASS_RELIC" ? Color.FromArgb(198, 100, 99)
                           : art.Type == "ARTF_CLASS_MAJOR" ? Color.FromArgb(180, 130, 255)
-                          : Color.LightGray,
+                          : Color.FromArgb(253, 201, 152),
                 Location = new Point(125, 50),
                 AutoSize = true,
             };
