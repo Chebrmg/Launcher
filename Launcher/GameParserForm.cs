@@ -999,11 +999,33 @@ namespace Launcher
             "FEET", "MISCSLOT1",
         };
 
+        private const int HeroPanelW = 490;
+        private const int HeroPanelH = 362;
+        private const int SlotIconSize = 64;
+
+        // Позиции центров слотов на фоне (масштабированные из 664×490 → 490×362)
+        private static readonly Dictionary<string, Point> SlotPositions = new()
+        {
+            { "HEAD",     new Point(66, 63) },
+            { "NECK",     new Point(203, 63) },
+            { "SHOULDERS",new Point(300, 63) },
+            { "MISCSLOT1",new Point(419, 63) },
+            { "PRIMARY",  new Point(66, 179) },
+            { "SECONDARY",new Point(419, 179) },
+            { "FEET",     new Point(66, 300) },
+            { "FINGER 1", new Point(203, 300) },
+            { "FINGER 2", new Point(300, 300) },
+            { "CHEST",    new Point(419, 300) },
+        };
+
         private List<ArtifactInfo> _shopItems = new();
         private readonly Dictionary<string, ArtifactInfo?> _equipped = new();
+        private readonly Dictionary<string, PictureBox> _slotIcons = new();
         private Panel _shopPanel;
         private Panel _slotsPanel;
+        private Panel _heroPanel;
         private Label _goldLabel;
+        private ToolTip _slotTip = new();
 
         public ArtifactTab(TabPage tab, List<ArtifactInfo> allArtifacts, GoldState gold)
         {
@@ -1046,11 +1068,67 @@ namespace Launcher
             {
                 Parent = _tab,
                 Location = new Point(620, 40),
-                Size = new Size(490, 610),
+                Size = new Size(HeroPanelW, 610),
                 BackColor = Color.FromArgb(35, 35, 50),
-                BorderStyle = BorderStyle.FixedSingle,
-                AutoScroll = true,
             };
+
+            // Фон героя с ячейками слотов
+            _heroPanel = new DoubleBufferedPanel
+            {
+                Parent = _slotsPanel,
+                Location = new Point(0, 0),
+                Size = new Size(HeroPanelW, HeroPanelH),
+            };
+            var bgPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "hero_slots.png");
+            if (File.Exists(bgPath))
+            {
+                _heroPanel.BackgroundImage = Image.FromFile(bgPath);
+                _heroPanel.BackgroundImageLayout = ImageLayout.Stretch;
+            }
+
+            // Создаём PictureBox для каждого слота
+            int half = SlotIconSize / 2;
+            foreach (var slot in SlotNames)
+            {
+                if (!SlotPositions.TryGetValue(slot, out var center))
+                    continue;
+
+                var pb = new PictureBox
+                {
+                    Parent = _heroPanel,
+                    Location = new Point(center.X - half, center.Y - half),
+                    Size = new Size(SlotIconSize, SlotIconSize),
+                    SizeMode = PictureBoxSizeMode.Zoom,
+                    BackColor = Color.Transparent,
+                    Cursor = Cursors.Hand,
+                    Tag = slot,
+                };
+
+                var ctx = new ContextMenuStrip();
+                ctx.Items.Add("Снять", null, (s, ev) => RemoveArtifact(slot));
+                ctx.Items.Add("Подробнее", null, (s, ev) =>
+                {
+                    if (_equipped[slot] is ArtifactInfo art)
+                        ShowArtifactDetail(art);
+                });
+                pb.ContextMenuStrip = ctx;
+                pb.DoubleClick += (s, ev) =>
+                {
+                    if (_equipped[slot] is ArtifactInfo art)
+                        ShowArtifactDetail(art);
+                };
+
+                _slotIcons[slot] = pb;
+            }
+        }
+
+        private void RemoveArtifact(string slot)
+        {
+            var old = _equipped[slot];
+            if (old == null) return;
+            _equipped[slot] = null;
+            _gold.Refund(old.CostOfGold);
+            RebuildSlots();
         }
 
         private void RollShop()
@@ -1260,125 +1338,16 @@ namespace Launcher
 
         private void RebuildSlots()
         {
-            _slotsPanel.SuspendLayout();
-            foreach (Control c in _slotsPanel.Controls)
-                c.Dispose();
-            _slotsPanel.Controls.Clear();
-
-            var title = new Label
-            {
-                Parent = _slotsPanel,
-                Text = "Экипировка",
-                Font = new Font("Segoe UI", 11, FontStyle.Bold),
-                ForeColor = Color.White,
-                Location = new Point(10, 5),
-                AutoSize = true,
-            };
-
-            int y = 30;
             foreach (var slot in SlotNames)
             {
-                var slotPanel = new Panel
-                {
-                    Parent = _slotsPanel,
-                    Location = new Point(5, y),
-                    Size = new Size(470, 52),
-                    BackColor = Color.FromArgb(45, 45, 65),
-                    BorderStyle = BorderStyle.FixedSingle,
-                };
-
-                var lblSlot = new Label
-                {
-                    Parent = slotPanel,
-                    Text = slot,
-                    Font = new Font("Segoe UI", 9, FontStyle.Bold),
-                    ForeColor = Color.Gray,
-                    Location = new Point(5, 15),
-                    Size = new Size(90, 20),
-                };
+                if (!_slotIcons.TryGetValue(slot, out var pb))
+                    continue;
 
                 var equipped = _equipped[slot];
-                if (equipped != null)
-                {
-                    var icon = new PictureBox
-                    {
-                        Parent = slotPanel,
-                        Location = new Point(95, 2),
-                        Size = new Size(46, 46),
-                        SizeMode = PictureBoxSizeMode.Zoom,
-                        Image = equipped.Icon != null ? new Bitmap(equipped.Icon) : null,
-                        BackColor = Color.FromArgb(35, 35, 50),
-                        Cursor = Cursors.Hand,
-                    };
-                    icon.DoubleClick += (s, ev) => ShowArtifactDetail(equipped);
-
-                    var nameLbl = new Label
-                    {
-                        Parent = slotPanel,
-                        Text = equipped.Name,
-                        Font = new Font("Segoe UI", 9, FontStyle.Bold),
-                        ForeColor = Color.White,
-                        Location = new Point(148, 5),
-                        AutoSize = true,
-                        Cursor = Cursors.Hand,
-                    };
-                    nameLbl.DoubleClick += (s, ev) => ShowArtifactDetail(equipped);
-
-                    var costLbl = new Label
-                    {
-                        Parent = slotPanel,
-                        Text = $"{equipped.CostOfGold}g  |  {equipped.TypeDisplay}",
-                        Font = new Font("Segoe UI", 8),
-                        ForeColor = Color.LightGray,
-                        Location = new Point(148, 25),
-                        AutoSize = true,
-                    };
-
-                    var btnRemove = new Button
-                    {
-                        Parent = slotPanel,
-                        Text = "Снять",
-                        Font = new Font("Segoe UI", 7),
-                        Size = new Size(55, 22),
-                        Location = new Point(410, 14),
-                        FlatStyle = FlatStyle.Flat,
-                        BackColor = Color.FromArgb(120, 50, 50),
-                        ForeColor = Color.White,
-                        Tag = slot,
-                    };
-                    btnRemove.FlatAppearance.BorderSize = 0;
-                    btnRemove.Click += BtnRemoveArt_Click;
-                }
-                else
-                {
-                    var emptyLbl = new Label
-                    {
-                        Parent = slotPanel,
-                        Text = "Пусто",
-                        Font = new Font("Segoe UI", 9),
-                        ForeColor = Color.DarkGray,
-                        Location = new Point(95, 15),
-                        AutoSize = true,
-                    };
-                }
-
-                y += 56;
-            }
-
-            _slotsPanel.ResumeLayout();
-        }
-
-        private void BtnRemoveArt_Click(object? sender, EventArgs e)
-        {
-            var btn = sender as Button;
-            if (btn?.Tag is not string slotName) return;
-
-            var art = _equipped[slotName];
-            if (art != null)
-            {
-                _gold.Refund(art.CostOfGold);
-                _equipped[slotName] = null;
-                RebuildSlots();
+                pb.Image = equipped?.Icon != null ? new Bitmap(equipped.Icon) : null;
+                _slotTip.SetToolTip(pb, equipped != null
+                    ? $"{slot}: {equipped.Name}\n{equipped.TypeDisplay}  |  {equipped.CostOfGold}g"
+                    : slot);
             }
         }
 

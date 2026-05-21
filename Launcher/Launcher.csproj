@@ -15,10 +15,14 @@
 
   <ItemGroup>
     <None Remove="bg.jpg" />
+    <None Remove="hero_slots.png" />
   </ItemGroup>
 
   <ItemGroup>
     <Content Include="bg.jpg">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="hero_slots.png">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
     <Content Include="favicon.ico" />
