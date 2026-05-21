@@ -462,7 +462,7 @@ namespace Launcher
                 var cXdb = ReadXdb(cp);
                 string vHref = cXdb?.Root?.Element("Visual")?.Attribute("href")?.Value ?? "";
                 if (!string.IsNullOrEmpty(vHref))
-                    visualPaths.Add(ExtractPath(vHref));
+                    visualPaths.Add(ResolvePath(cp, ExtractPath(vHref)));
             }
             PreloadFiles(visualPaths);
 
@@ -571,7 +571,7 @@ namespace Launcher
                 string visualHref = root.Element("Visual")?.Attribute("href")?.Value ?? "";
                 if (!string.IsNullOrEmpty(visualHref))
                 {
-                    string visualPath = ExtractPath(visualHref);
+                    string visualPath = ResolvePath(creaturePath, ExtractPath(visualHref));
                     var visualXdb = ReadXdb(visualPath);
                     if (visualXdb?.Root != null)
                     {
