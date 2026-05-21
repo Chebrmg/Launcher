@@ -462,7 +462,7 @@ namespace Launcher
                 var cXdb = ReadXdb(cp);
                 string vHref = cXdb?.Root?.Element("Visual")?.Attribute("href")?.Value ?? "";
                 if (!string.IsNullOrEmpty(vHref))
-                    visualPaths.Add(ResolvePath(cp, ExtractPath(vHref)));
+                    visualPaths.Add(ExtractPath(vHref));
             }
             PreloadFiles(visualPaths);
 
@@ -478,6 +478,8 @@ namespace Launcher
                     extraPaths.Add(ResolvePath(vp, ExtractPath(nameHref)));
 
                 string iconHref = vXdb.Root.Element("Icon64")?.Attribute("href")?.Value ?? "";
+                if (string.IsNullOrEmpty(iconHref))
+                    iconHref = vXdb.Root.Element("Icon128")?.Attribute("href")?.Value ?? "";
                 if (!string.IsNullOrEmpty(iconHref))
                 {
                     string iconXdbPath = ResolvePath(vp, ExtractPath(iconHref));
@@ -571,7 +573,7 @@ namespace Launcher
                 string visualHref = root.Element("Visual")?.Attribute("href")?.Value ?? "";
                 if (!string.IsNullOrEmpty(visualHref))
                 {
-                    string visualPath = ResolvePath(creaturePath, ExtractPath(visualHref));
+                    string visualPath = ExtractPath(visualHref);
                     var visualXdb = ReadXdb(visualPath);
                     if (visualXdb?.Root != null)
                     {
@@ -587,8 +589,10 @@ namespace Launcher
                             }
                         }
 
-                        // Иконка 64x64
+                        // Иконка 64x64, fallback на Icon128
                         string icon64Href = visualXdb.Root.Element("Icon64")?.Attribute("href")?.Value ?? "";
+                        if (string.IsNullOrEmpty(icon64Href))
+                            icon64Href = visualXdb.Root.Element("Icon128")?.Attribute("href")?.Value ?? "";
                         if (!string.IsNullOrEmpty(icon64Href))
                         {
                             string iconXdbPath = ResolvePath(visualPath, ExtractPath(icon64Href));
