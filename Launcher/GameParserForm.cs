@@ -345,7 +345,7 @@ namespace Launcher
             {
                 Parent = _detailPanel,
                 Location = new Point(155, 15),
-                Size = new Size(300, 30),
+                Size = new Size(300, 35),
                 Font = new Font("Segoe UI", 14, FontStyle.Bold),
                 ForeColor = Color.FromArgb(255, 220, 100),
             };
@@ -354,16 +354,16 @@ namespace Launcher
             {
                 Parent = _detailPanel,
                 Location = new Point(155, 50),
-                Size = new Size(300, 95),
-                Font = new Font("Segoe UI", 9),
+                Size = new Size(300, 100),
+                Font = new Font("Segoe UI", 9.5f),
                 ForeColor = Color.White,
             };
 
             _detailUpgrades = new Label
             {
                 Parent = _detailPanel,
-                Location = new Point(15, 155),
-                Size = new Size(440, 60),
+                Location = new Point(15, 160),
+                Size = new Size(440, 80),
                 Font = new Font("Segoe UI", 9),
                 ForeColor = Color.FromArgb(150, 200, 255),
             };
@@ -371,8 +371,8 @@ namespace Launcher
             _detailAbilities = new Label
             {
                 Parent = _detailPanel,
-                Location = new Point(15, 220),
-                Size = new Size(440, 380),
+                Location = new Point(15, 250),
+                Size = new Size(440, 350),
                 Font = new Font("Segoe UI", 9),
                 ForeColor = Color.FromArgb(180, 255, 180),
             };
@@ -473,14 +473,19 @@ namespace Launcher
 
             _detailName.Text = creature.Name;
 
-            string ranged = creature.Shots > 0 ? $"  |  Выстрелы: {creature.Shots}" : "";
-            string flying = creature.Flying ? "  |  Летает" : "";
-            _detailStats.Text =
-                $"Атака: {creature.AttackSkill}  |  Защита: {creature.DefenceSkill}\n" +
-                $"Урон: {creature.MinDamage}-{creature.MaxDamage}  |  HP: {creature.Health}\n" +
-                $"Скорость: {creature.Speed}  |  Инициатива: {creature.Initiative}{ranged}{flying}\n" +
-                $"Золото: {creature.Gold}  |  Рост в неделю: {creature.WeeklyGrowth}\n" +
-                $"Фракция: {creature.Faction}";
+            var statsLines = new List<string>
+            {
+                $"Атака: {creature.AttackSkill}  |  Защита: {creature.DefenceSkill}",
+                $"Урон: {creature.MinDamage}-{creature.MaxDamage}  |  HP: {creature.Health}",
+                $"Скорость: {creature.Speed}  |  Инициатива: {creature.Initiative}",
+            };
+            if (creature.Shots > 0)
+                statsLines.Add($"Выстрелы: {creature.Shots}");
+            if (creature.Flying)
+                statsLines.Add("Летает");
+            statsLines.Add($"Золото: {creature.Gold}  |  Рост в неделю: {creature.WeeklyGrowth}");
+            statsLines.Add($"Фракция: {creature.Faction}");
+            _detailStats.Text = string.Join("\n", statsLines);
 
             _detailUpgrades.Text = creature.Upgrades.Count > 0
                 ? "Улучшения: " + string.Join(", ", creature.Upgrades)
