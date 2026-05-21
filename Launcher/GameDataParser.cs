@@ -54,6 +54,7 @@ namespace Launcher
     {
         private readonly string _gameRoot;
         private Dictionary<string, VfsEntry> _vfs = new();
+        private Dictionary<string, byte[]> _fileCache = new();
 
         // Маппинг CreatureTown → человекочитаемое название фракции
         private static readonly Dictionary<string, string> TownToFaction = new()
@@ -163,11 +164,58 @@ namespace Launcher
         }
 
         /// <summary>
-        /// Читает файл из виртуальной ФС (из нужного архива).
+        /// Предзагружает нужные файлы из архивов в кэш за один проход.
+        /// </summary>
+        private void PreloadFiles(IEnumerable<string> paths)
+        {
+            // Группируем запрашиваемые пути по архивам
+            var byArchive = new Dictionary<string, List<(string normalized, string entryName)>>();
+            foreach (string path in paths)
+            {
+                string normalized = "/" + path.Replace('\\', '/').TrimStart('/');
+                if (_fileCache.ContainsKey(normalized))
+                    continue;
+                if (!_vfs.TryGetValue(normalized, out var vfsEntry))
+                    continue;
+
+                if (!byArchive.ContainsKey(vfsEntry.ArchivePath))
+                    byArchive[vfsEntry.ArchivePath] = new();
+                byArchive[vfsEntry.ArchivePath].Add((normalized, vfsEntry.EntryName));
+            }
+
+            // Читаем каждый архив один раз
+            foreach (var kv in byArchive)
+            {
+                try
+                {
+                    var needed = new HashSet<string>(kv.Value.Select(x => x.entryName));
+                    using var zip = ZipFile.OpenRead(kv.Key);
+                    foreach (var entry in zip.Entries)
+                    {
+                        if (needed.Contains(entry.FullName))
+                        {
+                            string norm = kv.Value.First(x => x.entryName == entry.FullName).normalized;
+                            using var stream = entry.Open();
+                            using var ms = new MemoryStream();
+                            stream.CopyTo(ms);
+                            _fileCache[norm] = ms.ToArray();
+                        }
+                    }
+                }
+                catch { }
+            }
+        }
+
+        /// <summary>
+        /// Читает файл из кэша или из архива.
         /// </summary>
         private byte[]? ReadFile(string virtualPath)
         {
             string normalized = "/" + virtualPath.Replace('\\', '/').TrimStart('/');
+
+            if (_fileCache.TryGetValue(normalized, out var cached))
+                return cached;
+
             if (!_vfs.TryGetValue(normalized, out var vfsEntry))
                 return null;
 
@@ -181,7 +229,9 @@ namespace Launcher
                 using var stream = entry.Open();
                 using var ms = new MemoryStream();
                 stream.CopyTo(ms);
-                return ms.ToArray();
+                var data = ms.ToArray();
+                _fileCache[normalized] = data;
+                return data;
             }
             catch
             {
@@ -245,9 +295,9 @@ namespace Launcher
         }
 
         /// <summary>
-        /// Парсит все юниты из игровых архивов.
+        /// Парсит юнитов из игровых архивов (maxCount = 0 для всех).
         /// </summary>
-        public List<CreatureInfo> ParseCreatures()
+        public List<CreatureInfo> ParseCreatures(int maxCount = 10)
         {
             var result = new List<CreatureInfo>();
 
@@ -257,8 +307,65 @@ namespace Launcher
 
             var items = creaturesXdb.Descendants("Item").ToList();
 
+            // Собираем пути всех файлов Creature.xdb для предзагрузки
+            var creaturePaths = new List<string>();
             foreach (var item in items)
             {
+                string id = item.Element("ID")?.Value ?? "";
+                if (id == "CREATURE_UNKNOWN") continue;
+                string href = item.Element("Obj")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(href))
+                    creaturePaths.Add(ExtractPath(href));
+            }
+
+            // Ограничиваем количество
+            if (maxCount > 0 && creaturePaths.Count > maxCount)
+                creaturePaths = creaturePaths.Take(maxCount).ToList();
+
+            // Предзагружаем Creature.xdb файлы одним проходом
+            PreloadFiles(creaturePaths);
+
+            // Собираем Visual пути из загруженных Creature.xdb для второй предзагрузки
+            var visualPaths = new List<string>();
+            foreach (string cp in creaturePaths)
+            {
+                var cXdb = ReadXdb(cp);
+                string vHref = cXdb?.Root?.Element("Visual")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(vHref))
+                    visualPaths.Add(ExtractPath(vHref));
+            }
+            PreloadFiles(visualPaths);
+
+            // Собираем пути к именам и иконкам из Visual.xdb
+            var extraPaths = new List<string>();
+            foreach (string vp in visualPaths)
+            {
+                var vXdb = ReadXdb(vp);
+                if (vXdb?.Root == null) continue;
+
+                string nameHref = vXdb.Root.Element("CreatureNameFileRef")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(nameHref))
+                    extraPaths.Add(ResolvePath(vp, ExtractPath(nameHref)));
+
+                string iconHref = vXdb.Root.Element("Icon64")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(iconHref))
+                {
+                    string iconXdbPath = ResolvePath(vp, ExtractPath(iconHref));
+                    extraPaths.Add(iconXdbPath);
+                    // Попробуем прочитать Texture.xdb чтобы узнать путь к DDS
+                    var texXdb = ReadXdb(iconXdbPath);
+                    string destName = texXdb?.Root?.Element("DestName")?.Attribute("href")?.Value ?? "";
+                    if (!string.IsNullOrEmpty(destName))
+                        extraPaths.Add(ResolvePath(iconXdbPath, destName));
+                }
+            }
+            PreloadFiles(extraPaths);
+
+            foreach (var item in items)
+            {
+                if (maxCount > 0 && result.Count >= maxCount)
+                    break;
+
                 string id = item.Element("ID")?.Value ?? "";
                 if (id == "CREATURE_UNKNOWN")
                     continue;
