@@ -261,7 +261,11 @@ namespace Launcher
 
         private void LoadCreatures()
         {
+            _creatureList.Visible = false;
+            _detailPanel.Visible = false;
             _loadingLabel.Visible = true;
+            _loadingLabel.Text = "Загрузка данных...";
+            _loadingLabel.BringToFront();
             _creatureList.Items.Clear();
 
             System.Threading.Tasks.Task.Run(() =>
@@ -274,7 +278,7 @@ namespace Launcher
             {
                 if (task.IsFaulted)
                 {
-                    _loadingLabel.Text = "Ошибка загрузки: " + task.Exception?.InnerException?.Message;
+                    _loadingLabel.Text = "Ошибка загрузки:\n" + task.Exception?.InnerException?.Message;
                     return;
                 }
 
@@ -288,6 +292,8 @@ namespace Launcher
                 }
 
                 _loadingLabel.Visible = false;
+                _creatureList.Visible = true;
+                _detailPanel.Visible = true;
                 FilterCreatures();
             }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
         }
