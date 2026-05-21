@@ -539,10 +539,10 @@ namespace Launcher
                 AutoSize = true,
             };
 
-            // Кнопка грейда/дегрейда
+            // Кнопки грейда (2 кнопки для 2 грейдов)
             if (creature.IsBase && creature.Upgrades.Count > 0)
             {
-                // Найти грейд-юнитов
+                int btnX = 200;
                 foreach (var upId in creature.Upgrades)
                 {
                     var upgraded = _creatures.FirstOrDefault(c => c.Id == upId);
@@ -555,7 +555,7 @@ namespace Launcher
                             Text = $"▲ {upgraded.Name} ({costDiff}g)",
                             Font = new Font("Segoe UI", 7),
                             Size = new Size(150, 22),
-                            Location = new Point(200, 43),
+                            Location = new Point(btnX, 43),
                             FlatStyle = FlatStyle.Flat,
                             BackColor = Color.FromArgb(50, 100, 50),
                             ForeColor = Color.White,
@@ -563,6 +563,7 @@ namespace Launcher
                         };
                         btnUp.FlatAppearance.BorderSize = 0;
                         btnUp.Click += BtnUpgrade_Click;
+                        btnX += 155;
                     }
                 }
             }
