@@ -774,6 +774,7 @@ namespace Launcher
         private void RebuildShop()
         {
             _shopPanel.SuspendLayout();
+            _shopPanel.AutoScrollPosition = new Point(0, 0);
             foreach (Control c in _shopPanel.Controls)
                 c.Dispose();
             _shopPanel.Controls.Clear();
@@ -1184,9 +1185,9 @@ namespace Launcher
 
             int y = 30;
 
-            // Порядок: мажоры, миноры, реликвии
+            // Порядок: миноры, мажоры, реликвии
             var ordered = _shopItems
-                .OrderBy(a => a.Type == "ARTF_CLASS_MAJOR" ? 0 : a.Type == "ARTF_CLASS_MINOR" ? 1 : 2)
+                .OrderBy(a => a.Type == "ARTF_CLASS_MINOR" ? 0 : a.Type == "ARTF_CLASS_MAJOR" ? 1 : 2)
                 .ToList();
 
             foreach (var art in ordered)
@@ -1256,7 +1257,7 @@ namespace Launcher
                 Font = new Font("Segoe UI", 9, FontStyle.Bold),
                 ForeColor = art.Type == "ARTF_CLASS_RELIC" ? Color.FromArgb(198, 100, 99)
                           : art.Type == "ARTF_CLASS_MAJOR" ? Color.FromArgb(180, 130, 255)
-                          : Color.FromArgb(253, 201, 152),
+                          : Color.White,
                 Location = new Point(66, 5),
                 AutoSize = true,
                 Cursor = Cursors.Hand,
@@ -1409,7 +1410,7 @@ namespace Launcher
                 Font = new Font("Segoe UI", 10),
                 ForeColor = art.Type == "ARTF_CLASS_RELIC" ? Color.FromArgb(198, 100, 99)
                           : art.Type == "ARTF_CLASS_MAJOR" ? Color.FromArgb(180, 130, 255)
-                          : Color.FromArgb(253, 201, 152),
+                          : Color.White,
                 Location = new Point(125, 50),
                 AutoSize = true,
             };
