@@ -9,21 +9,23 @@ namespace Launcher
     public class GameParserForm : Form
     {
         private readonly string _gameRoot;
+
+        // Экран выбора фракций
+        private Panel _selectionPanel;
+        private ComboBox _cmbFaction1;
+        private ComboBox _cmbFaction2;
+        private Button _btnStart;
+        private Label _selectionStatus;
+
+        // Основной контент (после выбора фракций)
         private TabControl _tabs;
-        private ListView _creatureList;
-        private Panel _detailPanel;
-        private ComboBox _factionFilter;
-        private Label _loadingLabel;
 
-        private List<CreatureInfo> _allCreatures = new();
-        private CreatureInfo? _selectedCreature;
+        // Вкладки Игрок 1 и Игрок 2
+        private CreatureTabContent _player1Tab;
+        private CreatureTabContent _player2Tab;
 
-        // Детальная панель
-        private PictureBox _detailIcon;
-        private Label _detailName;
-        private Label _detailStats;
-        private Label _detailAbilities;
-        private Label _detailUpgrades;
+        private string _faction1 = "";
+        private string _faction2 = "";
 
         public GameParserForm(string gameRoot)
         {
@@ -41,6 +43,105 @@ namespace Launcher
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
 
+            // === Экран выбора фракций ===
+            _selectionPanel = new Panel
+            {
+                Parent = this,
+                Location = new Point(0, 0),
+                Size = new Size(Width, Height),
+                BackColor = Color.FromArgb(30, 30, 40),
+            };
+
+            var titleLabel = new Label
+            {
+                Parent = _selectionPanel,
+                Text = "Выберите фракции",
+                Font = new Font("Segoe UI", 20, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                AutoSize = true,
+                Location = new Point(400, 120),
+            };
+
+            // Игрок 1
+            var lbl1 = new Label
+            {
+                Parent = _selectionPanel,
+                Text = "Игрок 1:",
+                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                ForeColor = Color.FromArgb(100, 180, 255),
+                AutoSize = true,
+                Location = new Point(350, 220),
+            };
+
+            _cmbFaction1 = new ComboBox
+            {
+                Parent = _selectionPanel,
+                Location = new Point(460, 218),
+                Size = new Size(250, 30),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Font = new Font("Segoe UI", 11),
+                BackColor = Color.FromArgb(50, 50, 65),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+            };
+            foreach (string f in GameDataParser.SelectableFactions)
+                _cmbFaction1.Items.Add(f);
+            _cmbFaction1.SelectedIndex = 0;
+
+            // Игрок 2
+            var lbl2 = new Label
+            {
+                Parent = _selectionPanel,
+                Text = "Игрок 2:",
+                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 130, 130),
+                AutoSize = true,
+                Location = new Point(350, 280),
+            };
+
+            _cmbFaction2 = new ComboBox
+            {
+                Parent = _selectionPanel,
+                Location = new Point(460, 278),
+                Size = new Size(250, 30),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Font = new Font("Segoe UI", 11),
+                BackColor = Color.FromArgb(50, 50, 65),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+            };
+            foreach (string f in GameDataParser.SelectableFactions)
+                _cmbFaction2.Items.Add(f);
+            _cmbFaction2.SelectedIndex = 1;
+
+            // Кнопка Начать
+            _btnStart = new Button
+            {
+                Parent = _selectionPanel,
+                Text = "Начать",
+                Font = new Font("Segoe UI", 13, FontStyle.Bold),
+                Size = new Size(200, 45),
+                Location = new Point(450, 370),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(50, 120, 50),
+                ForeColor = Color.White,
+            };
+            _btnStart.FlatAppearance.BorderSize = 0;
+            _btnStart.Click += BtnStart_Click;
+
+            // Статус загрузки
+            _selectionStatus = new Label
+            {
+                Parent = _selectionPanel,
+                Text = "",
+                Font = new Font("Segoe UI", 10),
+                ForeColor = Color.Gray,
+                Size = new Size(600, 100),
+                Location = new Point(260, 440),
+                TextAlign = ContentAlignment.TopCenter,
+            };
+
+            // === Основной контент (скрыт до выбора) ===
             _tabs = new TabControl
             {
                 Parent = this,
@@ -48,33 +149,88 @@ namespace Launcher
                 Size = new Size(Width - 36, Height - 60),
                 Appearance = TabAppearance.FlatButtons,
                 Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                Visible = false,
             };
+        }
 
-            // Вкладка 1: Юниты
-            var tabCreatures = new TabPage("Юниты")
+        private void BtnStart_Click(object? sender, EventArgs e)
+        {
+            _faction1 = _cmbFaction1.SelectedItem?.ToString() ?? "";
+            _faction2 = _cmbFaction2.SelectedItem?.ToString() ?? "";
+
+            if (_faction1 == _faction2)
+            {
+                MessageBox.Show("Выберите разные фракции!", "Парсер",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            _btnStart.Enabled = false;
+            _selectionStatus.Text = "Загрузка данных...";
+            _selectionStatus.ForeColor = Color.Gray;
+
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                var parser = new GameDataParser(_gameRoot);
+                parser.BuildVfs();
+
+                var factions1 = new List<string> { _faction1 };
+                var factions2 = new List<string> { _faction2 };
+
+                var creatures1 = parser.ParseCreatures(factions1);
+                var creatures2 = parser.ParseCreatures(factions2);
+
+                return (creatures1, creatures2, parser.DiagInfo);
+            }).ContinueWith(task =>
+            {
+                if (task.IsFaulted)
+                {
+                    _selectionStatus.Text = "Ошибка: " + task.Exception?.InnerException?.Message;
+                    _selectionStatus.ForeColor = Color.Red;
+                    _btnStart.Enabled = true;
+                    return;
+                }
+
+                var (creatures1, creatures2, diagInfo) = task.Result;
+
+                if (creatures1.Count == 0 && creatures2.Count == 0)
+                {
+                    _selectionStatus.Text = "Юниты не найдены.\n\nДиагностика:\n" + diagInfo;
+                    _selectionStatus.ForeColor = Color.OrangeRed;
+                    _btnStart.Enabled = true;
+                    return;
+                }
+
+                ShowMainContent(creatures1, creatures2);
+            }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
+        }
+
+        private void ShowMainContent(List<CreatureInfo> creatures1, List<CreatureInfo> creatures2)
+        {
+            _selectionPanel.Visible = false;
+            _tabs.Visible = true;
+
+            _tabs.TabPages.Clear();
+
+            // Вкладка Игрок 1
+            var tabP1 = new TabPage($"Игрок 1: {_faction1}")
             {
                 BackColor = Color.FromArgb(30, 30, 40),
                 ForeColor = Color.White,
             };
-            _tabs.TabPages.Add(tabCreatures);
+            _player1Tab = new CreatureTabContent(tabP1, creatures1);
+            _tabs.TabPages.Add(tabP1);
 
-            // Вкладка 2: Прокачка (заглушка)
-            var tabUpgrades = new TabPage("Прокачка")
+            // Вкладка Игрок 2
+            var tabP2 = new TabPage($"Игрок 2: {_faction2}")
             {
                 BackColor = Color.FromArgb(30, 30, 40),
                 ForeColor = Color.White,
             };
-            tabUpgrades.Controls.Add(new Label
-            {
-                Text = "В разработке...",
-                ForeColor = Color.Gray,
-                Font = new Font("Segoe UI", 14),
-                AutoSize = true,
-                Location = new Point(20, 20),
-            });
-            _tabs.TabPages.Add(tabUpgrades);
+            _player2Tab = new CreatureTabContent(tabP2, creatures2);
+            _tabs.TabPages.Add(tabP2);
 
-            // Вкладка 3: Артефакты (заглушка)
+            // Артефакты (заглушка)
             var tabArtifacts = new TabPage("Артефакты")
             {
                 BackColor = Color.FromArgb(30, 30, 40),
@@ -90,7 +246,7 @@ namespace Launcher
             });
             _tabs.TabPages.Add(tabArtifacts);
 
-            // Вкладка 4: Заклинания (заглушка)
+            // Заклинания (заглушка)
             var tabSpells = new TabPage("Заклинания")
             {
                 BackColor = Color.FromArgb(30, 30, 40),
@@ -105,43 +261,40 @@ namespace Launcher
                 Location = new Point(20, 20),
             });
             _tabs.TabPages.Add(tabSpells);
+        }
+    }
 
-            // === Содержимое вкладки Юниты ===
+    /// <summary>
+    /// Содержимое вкладки с юнитами (ListView + панель деталей).
+    /// </summary>
+    internal class CreatureTabContent
+    {
+        private readonly TabPage _tab;
+        private readonly List<CreatureInfo> _creatures;
+        private ListView _creatureList;
+        private Panel _detailPanel;
+        private PictureBox _detailIcon;
+        private Label _detailName;
+        private Label _detailStats;
+        private Label _detailUpgrades;
+        private Label _detailAbilities;
 
-            // Фильтр по фракциям
-            var filterLabel = new Label
-            {
-                Text = "Фракция:",
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 9),
-                Location = new Point(10, 12),
-                AutoSize = true,
-                Parent = tabCreatures,
-            };
+        public CreatureTabContent(TabPage tab, List<CreatureInfo> creatures)
+        {
+            _tab = tab;
+            _creatures = creatures;
+            BuildUI();
+            PopulateList();
+        }
 
-            _factionFilter = new ComboBox
-            {
-                Parent = tabCreatures,
-                Location = new Point(80, 8),
-                Size = new Size(180, 28),
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Font = new Font("Segoe UI", 9),
-                BackColor = Color.FromArgb(50, 50, 65),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-            };
-            _factionFilter.Items.Add("Все фракции");
-            foreach (string faction in GameDataParser.FactionOrder)
-                _factionFilter.Items.Add(faction);
-            _factionFilter.SelectedIndex = 0;
-            _factionFilter.SelectedIndexChanged += (s, e) => FilterCreatures();
-
-            // Список юнитов (ListView с иконками)
+        private void BuildUI()
+        {
+            // Список юнитов
             _creatureList = new ListView
             {
-                Parent = tabCreatures,
-                Location = new Point(10, 42),
-                Size = new Size(620, tabCreatures.Height > 0 ? 600 : 620),
+                Parent = _tab,
+                Location = new Point(10, 10),
+                Size = new Size(620, 620),
                 View = View.Details,
                 FullRowSelect = true,
                 GridLines = true,
@@ -153,7 +306,7 @@ namespace Launcher
                 BorderStyle = BorderStyle.FixedSingle,
             };
 
-            _creatureList.Columns.Add("", 68);       // Иконка
+            _creatureList.Columns.Add("", 68);
             _creatureList.Columns.Add("Имя", 150);
             _creatureList.Columns.Add("Атк", 42);
             _creatureList.Columns.Add("Защ", 42);
@@ -164,15 +317,15 @@ namespace Launcher
             _creatureList.Columns.Add("Золото", 55);
             _creatureList.Columns.Add("Рост", 42);
 
-            _creatureList.DrawColumnHeader += CreatureList_DrawColumnHeader;
-            _creatureList.DrawSubItem += CreatureList_DrawSubItem;
-            _creatureList.SelectedIndexChanged += CreatureList_SelectedIndexChanged;
+            _creatureList.DrawColumnHeader += DrawColumnHeader;
+            _creatureList.DrawSubItem += DrawSubItem;
+            _creatureList.SelectedIndexChanged += SelectedChanged;
 
-            // Панель деталей (справа)
+            // Панель деталей
             _detailPanel = new Panel
             {
-                Parent = tabCreatures,
-                Location = new Point(640, 42),
+                Parent = _tab,
+                Location = new Point(640, 10),
                 Size = new Size(470, 620),
                 BackColor = Color.FromArgb(40, 40, 55),
                 BorderStyle = BorderStyle.FixedSingle,
@@ -223,99 +376,14 @@ namespace Launcher
                 Font = new Font("Segoe UI", 9),
                 ForeColor = Color.FromArgb(180, 255, 180),
             };
-
-            // Индикатор загрузки
-            _loadingLabel = new Label
-            {
-                Parent = tabCreatures,
-                Text = "Загрузка данных...",
-                Font = new Font("Segoe UI", 10),
-                ForeColor = Color.Gray,
-                Size = new Size(600, 300),
-                Location = new Point(20, 200),
-            };
-
-            // Размер ListView подстраиваем под размер таба
-            _tabs.SelectedIndexChanged += (s, e) => AdjustSizes();
-            this.Shown += GameParserForm_Shown;
-            this.Resize += (s, e) => AdjustSizes();
         }
 
-        private void AdjustSizes()
-        {
-            var tab = _tabs.SelectedTab;
-            if (tab == null) return;
-
-            int contentHeight = tab.ClientSize.Height - 50;
-            if (contentHeight < 100) contentHeight = 600;
-
-            _creatureList.Size = new Size(620, contentHeight);
-            _detailPanel.Size = new Size(470, contentHeight);
-        }
-
-        private void GameParserForm_Shown(object? sender, EventArgs e)
-        {
-            AdjustSizes();
-            LoadCreatures();
-        }
-
-        private void LoadCreatures()
-        {
-            _creatureList.Visible = false;
-            _detailPanel.Visible = false;
-            _loadingLabel.Visible = true;
-            _loadingLabel.Text = "Загрузка данных...";
-            _loadingLabel.BringToFront();
-            _creatureList.Items.Clear();
-
-            System.Threading.Tasks.Task.Run(() =>
-            {
-                var parser = new GameDataParser(_gameRoot);
-                parser.BuildVfs();
-                var creatures = parser.ParseCreatures();
-                return (creatures, parser.DiagInfo);
-            }).ContinueWith(task =>
-            {
-                if (task.IsFaulted)
-                {
-                    _loadingLabel.Text = "Ошибка загрузки:\n" + task.Exception?.InnerException?.Message;
-                    return;
-                }
-
-                var (creatures, diagInfo) = task.Result;
-                _allCreatures = creatures;
-
-                if (_allCreatures.Count == 0)
-                {
-                    _loadingLabel.Text = "Юниты не найдены.\n\nДиагностика:\n" + diagInfo;
-                    return;
-                }
-
-                _loadingLabel.Visible = false;
-                _creatureList.Visible = true;
-                _detailPanel.Visible = true;
-                FilterCreatures();
-            }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
-        }
-
-        private void FilterCreatures()
+        private void PopulateList()
         {
             _creatureList.Items.Clear();
             _creatureList.SmallImageList?.Dispose();
 
-            string? selectedFaction = _factionFilter.SelectedIndex == 0
-                ? null
-                : _factionFilter.SelectedItem?.ToString();
-
-            var filtered = selectedFaction == null
-                ? _allCreatures
-                : _allCreatures.Where(c => c.Faction == selectedFaction).ToList();
-
-            // Сортируем: по порядку фракций, потом по Gold
-            var sorted = filtered
-                .OrderBy(c => Array.IndexOf(GameDataParser.FactionOrder, c.Faction))
-                .ThenBy(c => c.Gold)
-                .ToList();
+            var sorted = _creatures.OrderBy(c => c.Gold).ToList();
 
             var imageList = new ImageList
             {
@@ -348,7 +416,7 @@ namespace Launcher
             _creatureList.SmallImageList = imageList;
         }
 
-        private void CreatureList_DrawColumnHeader(object? sender, DrawListViewColumnHeaderEventArgs e)
+        private void DrawColumnHeader(object? sender, DrawListViewColumnHeaderEventArgs e)
         {
             e.Graphics.FillRectangle(new SolidBrush(Color.FromArgb(40, 40, 55)), e.Bounds);
             TextRenderer.DrawText(e.Graphics, e.Header?.Text ?? "",
@@ -356,7 +424,7 @@ namespace Launcher
                 TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
         }
 
-        private void CreatureList_DrawSubItem(object? sender, DrawListViewSubItemEventArgs e)
+        private void DrawSubItem(object? sender, DrawListViewSubItemEventArgs e)
         {
             if (e.Item == null) return;
 
@@ -370,7 +438,6 @@ namespace Launcher
 
             if (e.ColumnIndex == 0)
             {
-                // Рисуем иконку
                 var creature = e.Item.Tag as CreatureInfo;
                 if (creature?.Icon != null)
                 {
@@ -392,7 +459,7 @@ namespace Launcher
             }
         }
 
-        private void CreatureList_SelectedIndexChanged(object? sender, EventArgs e)
+        private void SelectedChanged(object? sender, EventArgs e)
         {
             if (_creatureList.SelectedItems.Count == 0)
                 return;
@@ -400,8 +467,6 @@ namespace Launcher
             var creature = _creatureList.SelectedItems[0].Tag as CreatureInfo;
             if (creature == null)
                 return;
-
-            _selectedCreature = creature;
 
             _detailIcon.Image?.Dispose();
             _detailIcon.Image = creature.Icon != null ? new Bitmap(creature.Icon) : null;
@@ -422,7 +487,7 @@ namespace Launcher
                 : "Улучшения: нет";
 
             _detailAbilities.Text = creature.Abilities.Count > 0
-                ? "Способности:\n" + string.Join("\n", creature.Abilities.Select(a => "• " + a))
+                ? "Способности:\n" + string.Join("\n", creature.Abilities.Select(a => "  " + a))
                 : "Способности: нет";
         }
 

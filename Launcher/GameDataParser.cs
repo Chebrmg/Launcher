@@ -91,6 +91,26 @@ namespace Launcher
             "Academy", "Dungeon", "Fortress", "Stronghold", "Нейтралы"
         };
 
+        // Фракции для выбора (без нейтралов)
+        public static readonly string[] SelectableFactions =
+        {
+            "Haven", "Inferno", "Necropolis", "Sylvan",
+            "Academy", "Dungeon", "Fortress", "Stronghold"
+        };
+
+        // Фракция → сегменты пути для фильтрации в Creatures.xdb
+        public static readonly Dictionary<string, string[]> FactionPathSegments = new()
+        {
+            { "Haven", new[] { "/Haven/" } },
+            { "Inferno", new[] { "/Inferno/" } },
+            { "Necropolis", new[] { "/Necropolis/" } },
+            { "Sylvan", new[] { "/Preserve/" } },
+            { "Academy", new[] { "/Academy/" } },
+            { "Dungeon", new[] { "/Dungeon/" } },
+            { "Fortress", new[] { "/Dwarf/" } },
+            { "Stronghold", new[] { "/Orcs/" } },
+        };
+
         public int VfsCount => _vfs.Count;
         public string DiagInfo { get; private set; } = "";
 
@@ -295,9 +315,29 @@ namespace Launcher
         }
 
         /// <summary>
-        /// Парсит юнитов из игровых архивов (maxCount = 0 для всех).
+        /// Проверяет, принадлежит ли путь к юниту указанным фракциям.
         /// </summary>
-        public List<CreatureInfo> ParseCreatures(int maxCount = 10)
+        private static bool MatchesFactions(string href, List<string> factions)
+        {
+            foreach (string faction in factions)
+            {
+                if (FactionPathSegments.TryGetValue(faction, out var segments))
+                {
+                    foreach (string seg in segments)
+                    {
+                        if (href.Contains(seg))
+                            return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Парсит юнитов из игровых архивов.
+        /// factions — список фракций для фильтрации (null = все).
+        /// </summary>
+        public List<CreatureInfo> ParseCreatures(List<string>? factions = null)
         {
             var result = new List<CreatureInfo>();
 
@@ -307,20 +347,21 @@ namespace Launcher
 
             var items = creaturesXdb.Descendants("Item").ToList();
 
-            // Собираем пути всех файлов Creature.xdb для предзагрузки
+            // Собираем пути файлов Creature.xdb (с фильтром по фракциям)
             var creaturePaths = new List<string>();
             foreach (var item in items)
             {
                 string id = item.Element("ID")?.Value ?? "";
                 if (id == "CREATURE_UNKNOWN") continue;
                 string href = item.Element("Obj")?.Attribute("href")?.Value ?? "";
-                if (!string.IsNullOrEmpty(href))
-                    creaturePaths.Add(ExtractPath(href));
-            }
+                if (string.IsNullOrEmpty(href)) continue;
 
-            // Ограничиваем количество
-            if (maxCount > 0 && creaturePaths.Count > maxCount)
-                creaturePaths = creaturePaths.Take(maxCount).ToList();
+                // Фильтр по фракциям через путь
+                if (factions != null && !MatchesFactions(href, factions))
+                    continue;
+
+                creaturePaths.Add(ExtractPath(href));
+            }
 
             // Предзагружаем Creature.xdb файлы одним проходом
             PreloadFiles(creaturePaths);
@@ -363,15 +404,15 @@ namespace Launcher
 
             foreach (var item in items)
             {
-                if (maxCount > 0 && result.Count >= maxCount)
-                    break;
-
                 string id = item.Element("ID")?.Value ?? "";
                 if (id == "CREATURE_UNKNOWN")
                     continue;
 
                 string objHref = item.Element("Obj")?.Attribute("href")?.Value ?? "";
                 if (string.IsNullOrEmpty(objHref))
+                    continue;
+
+                if (factions != null && !MatchesFactions(objHref, factions))
                     continue;
 
                 string creaturePath = ExtractPath(objHref);
