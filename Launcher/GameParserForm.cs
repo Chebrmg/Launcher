@@ -229,10 +229,10 @@ namespace Launcher
             {
                 Parent = tabCreatures,
                 Text = "Загрузка данных...",
-                Font = new Font("Segoe UI", 14),
+                Font = new Font("Segoe UI", 10),
                 ForeColor = Color.Gray,
-                AutoSize = true,
-                Location = new Point(250, 300),
+                Size = new Size(600, 300),
+                Location = new Point(20, 200),
             };
 
             // Размер ListView подстраиваем под размер таба
@@ -268,9 +268,8 @@ namespace Launcher
             {
                 var parser = new GameDataParser(_gameRoot);
                 parser.BuildVfs();
-                int vfsCount = parser.VfsCount;
                 var creatures = parser.ParseCreatures();
-                return (creatures, vfsCount);
+                return (creatures, parser.DiagInfo);
             }).ContinueWith(task =>
             {
                 if (task.IsFaulted)
@@ -279,12 +278,12 @@ namespace Launcher
                     return;
                 }
 
-                var (creatures, vfsCount) = task.Result;
+                var (creatures, diagInfo) = task.Result;
                 _allCreatures = creatures;
 
                 if (_allCreatures.Count == 0)
                 {
-                    _loadingLabel.Text = $"Юниты не найдены. Файлов в архивах: {vfsCount}\nПуть: {_gameRoot}";
+                    _loadingLabel.Text = "Юниты не найдены.\n\nДиагностика:\n" + diagInfo;
                     return;
                 }
 
