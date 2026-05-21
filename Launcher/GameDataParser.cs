@@ -55,6 +55,7 @@ namespace Launcher
         private readonly string _gameRoot;
         private Dictionary<string, VfsEntry> _vfs = new();
         private Dictionary<string, byte[]> _fileCache = new();
+        private Dictionary<string, string> _abilityNames = new();
 
         // Маппинг CreatureTown → человекочитаемое название фракции
         private static readonly Dictionary<string, string> TownToFaction = new()
@@ -302,6 +303,46 @@ namespace Launcher
         }
 
         /// <summary>
+        /// Парсит CombatAbilities.xdb и загружает имена способностей из .txt файлов.
+        /// </summary>
+        private void BuildAbilityNames()
+        {
+            _abilityNames.Clear();
+
+            var abilitiesXdb = ReadXdb("/GameMechanics/RefTables/CombatAbilities.xdb");
+            if (abilitiesXdb == null)
+                return;
+
+            // Собираем пути к .txt файлам имён
+            var namePaths = new Dictionary<string, string>(); // ID → path
+            foreach (var item in abilitiesXdb.Descendants("Item"))
+            {
+                string id = item.Element("ID")?.Value ?? "";
+                if (string.IsNullOrEmpty(id) || id == "ABILITY_NONE")
+                    continue;
+
+                string nameHref = item.Element("obj")?.Element("NameFileRef")?.Attribute("href")?.Value ?? "";
+                if (string.IsNullOrEmpty(nameHref))
+                    continue;
+
+                namePaths[id] = ExtractPath(nameHref);
+            }
+
+            // Предзагружаем все .txt файлы одним проходом
+            PreloadFiles(namePaths.Values);
+
+            // Читаем имена
+            foreach (var kv in namePaths)
+            {
+                var data = ReadFile(kv.Value);
+                if (data != null)
+                    _abilityNames[kv.Key] = DetectAndDecode(data);
+                else
+                    _abilityNames[kv.Key] = kv.Key; // fallback на ID
+            }
+        }
+
+        /// <summary>
         /// Определяет фракцию по пути к файлу юнита в Creatures.xdb.
         /// </summary>
         private static string DetectFactionFromPath(string path)
@@ -346,6 +387,10 @@ namespace Launcher
                 return result;
 
             var items = creaturesXdb.Descendants("Item").ToList();
+
+            // Загружаем словарь имён способностей
+            if (_abilityNames.Count == 0)
+                BuildAbilityNames();
 
             // Собираем пути файлов Creature.xdb (с фильтром по фракциям)
             var creaturePaths = new List<string>();
@@ -460,7 +505,7 @@ namespace Launcher
                     }
                 }
 
-                // Abilities
+                // Abilities (с подтягиванием имён из CombatAbilities.xdb)
                 var abilitiesEl = root.Element("Abilities");
                 if (abilitiesEl != null)
                 {
@@ -468,7 +513,11 @@ namespace Launcher
                     {
                         string val = abItem.Value.Trim();
                         if (!string.IsNullOrEmpty(val))
-                            creature.Abilities.Add(val);
+                        {
+                            string displayName = _abilityNames.TryGetValue(val, out string? name)
+                                ? name : val;
+                            creature.Abilities.Add(displayName);
+                        }
                     }
                 }
 
