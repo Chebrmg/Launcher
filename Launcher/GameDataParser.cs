@@ -31,9 +31,16 @@ namespace Launcher
         public string CreatureTown { get; set; } = "";
         public int WeeklyGrowth { get; set; }
         public int Gold { get; set; }
+        public int CreatureTier { get; set; }
+        public string BaseCreature { get; set; } = "";
         public List<string> Upgrades { get; set; } = new();
         public List<string> Abilities { get; set; } = new();
         public Image? Icon { get; set; }
+
+        /// <summary>
+        /// Базовый юнит (не грейд): BaseCreature == CREATURE_UNKNOWN и есть Upgrades.
+        /// </summary>
+        public bool IsBase => BaseCreature == "CREATURE_UNKNOWN";
     }
 
     /// <summary>
@@ -487,6 +494,8 @@ namespace Launcher
                     CreatureTown = root.Element("CreatureTown")?.Value ?? "",
                     WeeklyGrowth = ParseInt(root, "WeeklyGrowth"),
                     Gold = ParseInt(root.Element("Cost"), "Gold"),
+                    CreatureTier = ParseInt(root, "CreatureTier"),
+                    BaseCreature = root.Element("BaseCreature")?.Value ?? "CREATURE_UNKNOWN",
                 };
 
                 // Фракция из CreatureTown (приоритетнее чем из пути)

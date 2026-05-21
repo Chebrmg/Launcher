@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Linq;
 using System.Windows.Forms;
 
@@ -17,15 +18,14 @@ namespace Launcher
         private Button _btnStart;
         private Label _selectionStatus;
 
-        // Основной контент (после выбора фракций)
+        // Основной контент
         private TabControl _tabs;
-
-        // Вкладки Игрок 1 и Игрок 2
-        private CreatureTabContent _player1Tab;
-        private CreatureTabContent _player2Tab;
 
         private string _faction1 = "";
         private string _faction2 = "";
+
+        // Общее золото для обоих игроков
+        private int _totalGold = 120000;
 
         public GameParserForm(string gameRoot)
         {
@@ -52,7 +52,7 @@ namespace Launcher
                 BackColor = Color.FromArgb(30, 30, 40),
             };
 
-            var titleLabel = new Label
+            new Label
             {
                 Parent = _selectionPanel,
                 Text = "Выберите фракции",
@@ -62,8 +62,7 @@ namespace Launcher
                 Location = new Point(400, 120),
             };
 
-            // Игрок 1
-            var lbl1 = new Label
+            new Label
             {
                 Parent = _selectionPanel,
                 Text = "Игрок 1:",
@@ -88,8 +87,7 @@ namespace Launcher
                 _cmbFaction1.Items.Add(f);
             _cmbFaction1.SelectedIndex = 0;
 
-            // Игрок 2
-            var lbl2 = new Label
+            new Label
             {
                 Parent = _selectionPanel,
                 Text = "Игрок 2:",
@@ -114,7 +112,6 @@ namespace Launcher
                 _cmbFaction2.Items.Add(f);
             _cmbFaction2.SelectedIndex = 1;
 
-            // Кнопка Начать
             _btnStart = new Button
             {
                 Parent = _selectionPanel,
@@ -129,7 +126,6 @@ namespace Launcher
             _btnStart.FlatAppearance.BorderSize = 0;
             _btnStart.Click += BtnStart_Click;
 
-            // Статус загрузки
             _selectionStatus = new Label
             {
                 Parent = _selectionPanel,
@@ -141,7 +137,6 @@ namespace Launcher
                 TextAlign = ContentAlignment.TopCenter,
             };
 
-            // === Основной контент (скрыт до выбора) ===
             _tabs = new TabControl
             {
                 Parent = this,
@@ -173,14 +168,9 @@ namespace Launcher
             {
                 var parser = new GameDataParser(_gameRoot);
                 parser.BuildVfs();
-
-                var factions1 = new List<string> { _faction1 };
-                var factions2 = new List<string> { _faction2 };
-
-                var creatures1 = parser.ParseCreatures(factions1);
-                var creatures2 = parser.ParseCreatures(factions2);
-
-                return (creatures1, creatures2, parser.DiagInfo);
+                var c1 = parser.ParseCreatures(new List<string> { _faction1 });
+                var c2 = parser.ParseCreatures(new List<string> { _faction2 });
+                return (c1, c2, parser.DiagInfo);
             }).ContinueWith(task =>
             {
                 if (task.IsFaulted)
@@ -191,17 +181,16 @@ namespace Launcher
                     return;
                 }
 
-                var (creatures1, creatures2, diagInfo) = task.Result;
-
-                if (creatures1.Count == 0 && creatures2.Count == 0)
+                var (c1, c2, diag) = task.Result;
+                if (c1.Count == 0 && c2.Count == 0)
                 {
-                    _selectionStatus.Text = "Юниты не найдены.\n\nДиагностика:\n" + diagInfo;
+                    _selectionStatus.Text = "Юниты не найдены.\n\nДиагностика:\n" + diag;
                     _selectionStatus.ForeColor = Color.OrangeRed;
                     _btnStart.Enabled = true;
                     return;
                 }
 
-                ShowMainContent(creatures1, creatures2);
+                ShowMainContent(c1, c2);
             }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
         }
 
@@ -209,8 +198,9 @@ namespace Launcher
         {
             _selectionPanel.Visible = false;
             _tabs.Visible = true;
-
             _tabs.TabPages.Clear();
+
+            var goldState = new GoldState(_totalGold);
 
             // Вкладка Игрок 1
             var tabP1 = new TabPage($"Игрок 1: {_faction1}")
@@ -218,7 +208,7 @@ namespace Launcher
                 BackColor = Color.FromArgb(30, 30, 40),
                 ForeColor = Color.White,
             };
-            _player1Tab = new CreatureTabContent(tabP1, creatures1);
+            new ArmyPurchaseTab(tabP1, creatures1, goldState);
             _tabs.TabPages.Add(tabP1);
 
             // Вкладка Игрок 2
@@ -227,24 +217,21 @@ namespace Launcher
                 BackColor = Color.FromArgb(30, 30, 40),
                 ForeColor = Color.White,
             };
-            _player2Tab = new CreatureTabContent(tabP2, creatures2);
+            new ArmyPurchaseTab(tabP2, creatures2, goldState);
             _tabs.TabPages.Add(tabP2);
 
             // Артефакты (заглушка)
-            var tabArtifacts = new TabPage("Артефакты")
+            var tabArt = new TabPage("Артефакты")
             {
                 BackColor = Color.FromArgb(30, 30, 40),
                 ForeColor = Color.White,
             };
-            tabArtifacts.Controls.Add(new Label
+            tabArt.Controls.Add(new Label
             {
-                Text = "В разработке...",
-                ForeColor = Color.Gray,
-                Font = new Font("Segoe UI", 14),
-                AutoSize = true,
-                Location = new Point(20, 20),
+                Text = "В разработке...", ForeColor = Color.Gray,
+                Font = new Font("Segoe UI", 14), AutoSize = true, Location = new Point(20, 20),
             });
-            _tabs.TabPages.Add(tabArtifacts);
+            _tabs.TabPages.Add(tabArt);
 
             // Заклинания (заглушка)
             var tabSpells = new TabPage("Заклинания")
@@ -254,256 +241,685 @@ namespace Launcher
             };
             tabSpells.Controls.Add(new Label
             {
-                Text = "В разработке...",
-                ForeColor = Color.Gray,
-                Font = new Font("Segoe UI", 14),
-                AutoSize = true,
-                Location = new Point(20, 20),
+                Text = "В разработке...", ForeColor = Color.Gray,
+                Font = new Font("Segoe UI", 14), AutoSize = true, Location = new Point(20, 20),
             });
             _tabs.TabPages.Add(tabSpells);
         }
     }
 
     /// <summary>
-    /// Содержимое вкладки с юнитами (ListView + панель деталей).
+    /// Общее золото между вкладками.
     /// </summary>
-    internal class CreatureTabContent
+    internal class GoldState
+    {
+        public int Total { get; private set; }
+        public int Spent { get; set; }
+        public int Remaining => Total - Spent;
+
+        public event Action? Changed;
+
+        public GoldState(int total)
+        {
+            Total = total;
+        }
+
+        public bool TrySpend(int amount)
+        {
+            if (amount > Remaining) return false;
+            Spent += amount;
+            Changed?.Invoke();
+            return true;
+        }
+
+        public void Refund(int amount)
+        {
+            Spent -= amount;
+            if (Spent < 0) Spent = 0;
+            Changed?.Invoke();
+        }
+    }
+
+    /// <summary>
+    /// Слот армии: юнит + количество.
+    /// </summary>
+    internal class ArmySlot
+    {
+        public CreatureInfo? Creature { get; set; }
+        public int Count { get; set; }
+    }
+
+    /// <summary>
+    /// Множитель прироста по тиру (таблица).
+    /// </summary>
+    internal static class TierMultipliers
+    {
+        private static readonly Dictionary<int, int> Multipliers = new()
+        {
+            { 1, 12 }, { 2, 11 }, { 3, 10 }, { 4, 9 },
+            { 5, 8 }, { 6, 7 }, { 7, 6 },
+        };
+
+        public static int Get(int tier)
+        {
+            return Multipliers.TryGetValue(tier, out int m) ? m : 6;
+        }
+    }
+
+    /// <summary>
+    /// Пул юнитов одного тира.
+    /// </summary>
+    internal class TierPool
+    {
+        public int Tier { get; }
+        public int MaxPool { get; private set; }
+        public int Available { get; set; }
+        public List<CreatureInfo> Creatures { get; } = new();
+
+        public TierPool(int tier)
+        {
+            Tier = tier;
+        }
+
+        public void Initialize()
+        {
+            int baseGrowth = Creatures.Where(c => c.IsBase).Sum(c => c.WeeklyGrowth);
+            MaxPool = baseGrowth * TierMultipliers.Get(Tier);
+            Available = MaxPool;
+        }
+    }
+
+    /// <summary>
+    /// Вкладка закупа армии одного игрока.
+    /// </summary>
+    internal class ArmyPurchaseTab
     {
         private readonly TabPage _tab;
+        private readonly GoldState _gold;
         private readonly List<CreatureInfo> _creatures;
-        private ListView _creatureList;
-        private Panel _detailPanel;
-        private PictureBox _detailIcon;
-        private Label _detailName;
-        private Label _detailStats;
-        private Label _detailUpgrades;
-        private Label _detailAbilities;
+        private readonly Dictionary<int, TierPool> _pools = new();
+        private readonly ArmySlot[] _slots = new ArmySlot[7];
+        private readonly Panel[] _slotPanels = new Panel[7];
+        private Label _goldLabel;
+        private Panel _shopPanel;
+        private Panel _armyPanel;
 
-        public CreatureTabContent(TabPage tab, List<CreatureInfo> creatures)
+        public ArmyPurchaseTab(TabPage tab, List<CreatureInfo> creatures, GoldState gold)
         {
             _tab = tab;
+            _gold = gold;
             _creatures = creatures;
+
+            for (int i = 0; i < 7; i++)
+                _slots[i] = new ArmySlot();
+
+            BuildPools();
             BuildUI();
-            PopulateList();
+            _gold.Changed += RefreshGold;
+        }
+
+        private void BuildPools()
+        {
+            foreach (var c in _creatures)
+            {
+                int tier = c.CreatureTier;
+                if (tier < 1 || tier > 7) continue;
+
+                if (!_pools.ContainsKey(tier))
+                    _pools[tier] = new TierPool(tier);
+                _pools[tier].Creatures.Add(c);
+            }
+
+            foreach (var pool in _pools.Values)
+                pool.Initialize();
         }
 
         private void BuildUI()
         {
-            // Список юнитов
-            _creatureList = new ListView
+            // Золото
+            _goldLabel = new Label
             {
                 Parent = _tab,
-                Location = new Point(10, 10),
-                Size = new Size(620, 620),
-                View = View.Details,
-                FullRowSelect = true,
-                GridLines = true,
-                BackColor = Color.FromArgb(35, 35, 50),
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 9),
-                HeaderStyle = ColumnHeaderStyle.Nonclickable,
-                OwnerDraw = true,
-                BorderStyle = BorderStyle.FixedSingle,
-            };
-
-            _creatureList.Columns.Add("", 68);
-            _creatureList.Columns.Add("Имя", 150);
-            _creatureList.Columns.Add("Атк", 42);
-            _creatureList.Columns.Add("Защ", 42);
-            _creatureList.Columns.Add("Урон", 60);
-            _creatureList.Columns.Add("HP", 45);
-            _creatureList.Columns.Add("Скор", 42);
-            _creatureList.Columns.Add("Иниц", 42);
-            _creatureList.Columns.Add("Золото", 55);
-            _creatureList.Columns.Add("Рост", 42);
-
-            _creatureList.DrawColumnHeader += DrawColumnHeader;
-            _creatureList.DrawSubItem += DrawSubItem;
-            _creatureList.SelectedIndexChanged += SelectedChanged;
-
-            // Панель деталей
-            _detailPanel = new Panel
-            {
-                Parent = _tab,
-                Location = new Point(640, 10),
-                Size = new Size(470, 620),
-                BackColor = Color.FromArgb(40, 40, 55),
-                BorderStyle = BorderStyle.FixedSingle,
-            };
-
-            _detailIcon = new PictureBox
-            {
-                Parent = _detailPanel,
-                Location = new Point(15, 15),
-                Size = new Size(128, 128),
-                SizeMode = PictureBoxSizeMode.Zoom,
-                BackColor = Color.FromArgb(30, 30, 45),
-                BorderStyle = BorderStyle.FixedSingle,
-            };
-
-            _detailName = new Label
-            {
-                Parent = _detailPanel,
-                Location = new Point(155, 15),
-                Size = new Size(300, 35),
-                Font = new Font("Segoe UI", 14, FontStyle.Bold),
+                Location = new Point(10, 8),
+                Size = new Size(300, 25),
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
                 ForeColor = Color.FromArgb(255, 220, 100),
             };
+            RefreshGold();
 
-            _detailStats = new Label
+            // Магазин юнитов (левая часть)
+            _shopPanel = new Panel
             {
-                Parent = _detailPanel,
-                Location = new Point(155, 50),
-                Size = new Size(300, 100),
-                Font = new Font("Segoe UI", 9.5f),
+                Parent = _tab,
+                Location = new Point(10, 40),
+                Size = new Size(620, 610),
+                AutoScroll = true,
+                BackColor = Color.FromArgb(30, 30, 40),
+            };
+
+            // Армия (правая часть)
+            _armyPanel = new Panel
+            {
+                Parent = _tab,
+                Location = new Point(640, 40),
+                Size = new Size(470, 610),
+                BackColor = Color.FromArgb(35, 35, 50),
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+
+            var armyTitle = new Label
+            {
+                Parent = _armyPanel,
+                Text = "Армия (7 слотов)",
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
                 ForeColor = Color.White,
+                Location = new Point(10, 5),
+                AutoSize = true,
             };
 
-            _detailUpgrades = new Label
-            {
-                Parent = _detailPanel,
-                Location = new Point(15, 160),
-                Size = new Size(440, 80),
-                Font = new Font("Segoe UI", 9),
-                ForeColor = Color.FromArgb(150, 200, 255),
-            };
+            for (int i = 0; i < 7; i++)
+                BuildSlotPanel(i);
 
-            _detailAbilities = new Label
-            {
-                Parent = _detailPanel,
-                Location = new Point(15, 250),
-                Size = new Size(440, 350),
-                Font = new Font("Segoe UI", 9),
-                ForeColor = Color.FromArgb(180, 255, 180),
-            };
+            RebuildShop();
         }
 
-        private void PopulateList()
+        private void BuildSlotPanel(int index)
         {
-            _creatureList.Items.Clear();
-            _creatureList.SmallImageList?.Dispose();
-
-            var sorted = _creatures.OrderBy(c => c.Gold).ToList();
-
-            var imageList = new ImageList
+            int y = 30 + index * 80;
+            var panel = new Panel
             {
-                ImageSize = new Size(64, 64),
-                ColorDepth = ColorDepth.Depth32Bit,
+                Parent = _armyPanel,
+                Location = new Point(5, y),
+                Size = new Size(455, 74),
+                BackColor = Color.FromArgb(45, 45, 65),
+                BorderStyle = BorderStyle.FixedSingle,
             };
 
-            foreach (var creature in sorted)
+            var lblIndex = new Label
             {
-                string imgKey = creature.Id;
-                if (creature.Icon != null)
-                    imageList.Images.Add(imgKey, creature.Icon);
-                else
-                    imageList.Images.Add(imgKey, CreatePlaceholder(64, 64));
+                Parent = panel,
+                Text = $"{index + 1}.",
+                Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                ForeColor = Color.Gray,
+                Location = new Point(5, 26),
+                AutoSize = true,
+            };
 
-                var item = new ListViewItem("") { ImageKey = imgKey, Tag = creature };
-                item.SubItems.Add(creature.Name);
-                item.SubItems.Add(creature.AttackSkill.ToString());
-                item.SubItems.Add(creature.DefenceSkill.ToString());
-                item.SubItems.Add($"{creature.MinDamage}-{creature.MaxDamage}");
-                item.SubItems.Add(creature.Health.ToString());
-                item.SubItems.Add(creature.Speed.ToString());
-                item.SubItems.Add(creature.Initiative.ToString());
-                item.SubItems.Add(creature.Gold.ToString());
-                item.SubItems.Add(creature.WeeklyGrowth.ToString());
+            _slotPanels[index] = panel;
+            RefreshSlot(index);
+        }
 
-                _creatureList.Items.Add(item);
+        private void RefreshSlot(int index)
+        {
+            var panel = _slotPanels[index];
+            // Удаляем всё кроме номера
+            var toRemove = new List<Control>();
+            foreach (Control c in panel.Controls)
+            {
+                if (c is Label lbl && lbl.Text == $"{index + 1}.")
+                    continue;
+                toRemove.Add(c);
+            }
+            foreach (var c in toRemove)
+            {
+                panel.Controls.Remove(c);
+                c.Dispose();
             }
 
-            _creatureList.SmallImageList = imageList;
-        }
-
-        private void DrawColumnHeader(object? sender, DrawListViewColumnHeaderEventArgs e)
-        {
-            e.Graphics.FillRectangle(new SolidBrush(Color.FromArgb(40, 40, 55)), e.Bounds);
-            TextRenderer.DrawText(e.Graphics, e.Header?.Text ?? "",
-                new Font("Segoe UI", 9, FontStyle.Bold), e.Bounds, Color.White,
-                TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter);
-        }
-
-        private void DrawSubItem(object? sender, DrawListViewSubItemEventArgs e)
-        {
-            if (e.Item == null) return;
-
-            var bgColor = e.Item.Selected
-                ? Color.FromArgb(60, 60, 90)
-                : (e.ItemIndex % 2 == 0
-                    ? Color.FromArgb(35, 35, 50)
-                    : Color.FromArgb(42, 42, 58));
-
-            e.Graphics.FillRectangle(new SolidBrush(bgColor), e.Bounds);
-
-            if (e.ColumnIndex == 0)
+            var slot = _slots[index];
+            if (slot.Creature == null)
             {
-                var creature = e.Item.Tag as CreatureInfo;
-                if (creature?.Icon != null)
+                var emptyLbl = new Label
                 {
-                    int imgSize = Math.Min(e.Bounds.Width - 4, e.Bounds.Height - 4);
-                    if (imgSize < 16) imgSize = 64;
-                    int x = e.Bounds.X + (e.Bounds.Width - imgSize) / 2;
-                    int y = e.Bounds.Y + (e.Bounds.Height - imgSize) / 2;
-                    e.Graphics.DrawImage(creature.Icon, x, y, imgSize, imgSize);
+                    Parent = panel,
+                    Text = "Пустой слот",
+                    Font = new Font("Segoe UI", 9),
+                    ForeColor = Color.DarkGray,
+                    Location = new Point(30, 26),
+                    AutoSize = true,
+                };
+                panel.BackColor = Color.FromArgb(45, 45, 65);
+                return;
+            }
+
+            panel.BackColor = Color.FromArgb(50, 50, 70);
+            var creature = slot.Creature;
+
+            // Иконка
+            var icon = new PictureBox
+            {
+                Parent = panel,
+                Location = new Point(25, 3),
+                Size = new Size(64, 64),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Image = creature.Icon != null ? new Bitmap(creature.Icon) : null,
+                BackColor = Color.FromArgb(35, 35, 50),
+            };
+
+            // Имя + количество
+            var nameLbl = new Label
+            {
+                Parent = panel,
+                Text = $"{creature.Name} x{slot.Count}",
+                Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                ForeColor = Color.White,
+                Location = new Point(95, 5),
+                AutoSize = true,
+            };
+
+            // Статы краткие
+            var statsLbl = new Label
+            {
+                Parent = panel,
+                Text = $"Т{creature.CreatureTier} | А:{creature.AttackSkill} З:{creature.DefenceSkill} У:{creature.MinDamage}-{creature.MaxDamage} HP:{creature.Health}",
+                Font = new Font("Segoe UI", 8),
+                ForeColor = Color.LightGray,
+                Location = new Point(95, 25),
+                AutoSize = true,
+            };
+
+            var gradeLbl = new Label
+            {
+                Parent = panel,
+                Text = creature.IsBase ? "Базовый" : "Грейд",
+                Font = new Font("Segoe UI", 8),
+                ForeColor = creature.IsBase ? Color.Gray : Color.FromArgb(100, 255, 100),
+                Location = new Point(95, 43),
+                AutoSize = true,
+            };
+
+            // Кнопка грейда/дегрейда
+            if (creature.IsBase && creature.Upgrades.Count > 0)
+            {
+                // Найти грейд-юнитов
+                foreach (var upId in creature.Upgrades)
+                {
+                    var upgraded = _creatures.FirstOrDefault(c => c.Id == upId);
+                    if (upgraded != null)
+                    {
+                        int costDiff = (upgraded.Gold - creature.Gold) * slot.Count;
+                        var btnUp = new Button
+                        {
+                            Parent = panel,
+                            Text = $"▲ {upgraded.Name} ({costDiff}g)",
+                            Font = new Font("Segoe UI", 7),
+                            Size = new Size(150, 22),
+                            Location = new Point(200, 43),
+                            FlatStyle = FlatStyle.Flat,
+                            BackColor = Color.FromArgb(50, 100, 50),
+                            ForeColor = Color.White,
+                            Tag = new object[] { index, upgraded, costDiff },
+                        };
+                        btnUp.FlatAppearance.BorderSize = 0;
+                        btnUp.Click += BtnUpgrade_Click;
+                    }
                 }
+            }
+            else if (!creature.IsBase)
+            {
+                // Найти базового юнита (у кого в Upgrades есть этот ID)
+                var baseCreature = _creatures.FirstOrDefault(c =>
+                    c.IsBase && c.Upgrades.Contains(creature.Id) && c.CreatureTier == creature.CreatureTier);
+                if (baseCreature != null)
+                {
+                    // Кнопка дегрейда (бесплатно)
+                    var btnDown = new Button
+                    {
+                        Parent = panel,
+                        Text = $"▼ {baseCreature.Name} (0g)",
+                        Font = new Font("Segoe UI", 7),
+                        Size = new Size(130, 22),
+                        Location = new Point(200, 43),
+                        FlatStyle = FlatStyle.Flat,
+                        BackColor = Color.FromArgb(80, 80, 50),
+                        ForeColor = Color.White,
+                        Tag = new object[] { index, baseCreature },
+                    };
+                    btnDown.FlatAppearance.BorderSize = 0;
+                    btnDown.Click += BtnDowngrade_Click;
+
+                    // Кнопка регрейда в другой апгрейд
+                    if (baseCreature.Upgrades.Count > 1)
+                    {
+                        var otherId = baseCreature.Upgrades.FirstOrDefault(u => u != creature.Id);
+                        var other = _creatures.FirstOrDefault(c => c.Id == otherId);
+                        if (other != null)
+                        {
+                            int costDiff = (other.Gold - creature.Gold) * slot.Count;
+                            int displayCost = Math.Max(0, costDiff);
+                            var btnRe = new Button
+                            {
+                                Parent = panel,
+                                Text = $"⇄ {other.Name} ({displayCost}g)",
+                                Font = new Font("Segoe UI", 7),
+                                Size = new Size(130, 22),
+                                Location = new Point(335, 43),
+                                FlatStyle = FlatStyle.Flat,
+                                BackColor = Color.FromArgb(60, 60, 100),
+                                ForeColor = Color.White,
+                                Tag = new object[] { index, other, costDiff },
+                            };
+                            btnRe.FlatAppearance.BorderSize = 0;
+                            btnRe.Click += BtnRegrade_Click;
+                        }
+                    }
+                }
+            }
+
+            // Кнопка продажи
+            int sellValue = creature.Gold * slot.Count;
+            var btnSell = new Button
+            {
+                Parent = panel,
+                Text = $"Продать (+{sellValue}g)",
+                Font = new Font("Segoe UI", 7),
+                Size = new Size(90, 22),
+                Location = new Point(360, 5),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(120, 50, 50),
+                ForeColor = Color.White,
+                Tag = index,
+            };
+            btnSell.FlatAppearance.BorderSize = 0;
+            btnSell.Click += BtnSell_Click;
+        }
+
+        private void BtnUpgrade_Click(object? sender, EventArgs e)
+        {
+            var btn = sender as Button;
+            if (btn?.Tag is not object[] args) return;
+            int slotIdx = (int)args[0];
+            var upgraded = (CreatureInfo)args[1];
+            int costDiff = (int)args[2];
+
+            if (!_gold.TrySpend(costDiff))
+            {
+                MessageBox.Show("Недостаточно золота!", "Грейд", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            _slots[slotIdx].Creature = upgraded;
+            RefreshSlot(slotIdx);
+            RebuildShop();
+        }
+
+        private void BtnDowngrade_Click(object? sender, EventArgs e)
+        {
+            var btn = sender as Button;
+            if (btn?.Tag is not object[] args) return;
+            int slotIdx = (int)args[0];
+            var baseCreature = (CreatureInfo)args[1];
+
+            var current = _slots[slotIdx].Creature;
+            if (current != null)
+            {
+                int refund = (current.Gold - baseCreature.Gold) * _slots[slotIdx].Count;
+                if (refund > 0) _gold.Refund(refund);
+            }
+
+            _slots[slotIdx].Creature = baseCreature;
+            RefreshSlot(slotIdx);
+            RebuildShop();
+        }
+
+        private void BtnRegrade_Click(object? sender, EventArgs e)
+        {
+            var btn = sender as Button;
+            if (btn?.Tag is not object[] args) return;
+            int slotIdx = (int)args[0];
+            var other = (CreatureInfo)args[1];
+            int costDiff = (int)args[2];
+
+            if (costDiff > 0 && !_gold.TrySpend(costDiff))
+            {
+                MessageBox.Show("Недостаточно золота!", "Регрейд", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            else if (costDiff < 0)
+            {
+                _gold.Refund(-costDiff);
+            }
+
+            _slots[slotIdx].Creature = other;
+            RefreshSlot(slotIdx);
+            RebuildShop();
+        }
+
+        private void BtnSell_Click(object? sender, EventArgs e)
+        {
+            var btn = sender as Button;
+            if (btn?.Tag is not int slotIdx) return;
+
+            var slot = _slots[slotIdx];
+            if (slot.Creature == null) return;
+
+            int refund = slot.Creature.Gold * slot.Count;
+            int tier = slot.Creature.CreatureTier;
+
+            // Вернуть юнитов в пул
+            if (_pools.TryGetValue(tier, out var pool))
+                pool.Available += slot.Count;
+
+            _gold.Refund(refund);
+
+            slot.Creature = null;
+            slot.Count = 0;
+
+            RefreshSlot(slotIdx);
+            RebuildShop();
+        }
+
+        private void RebuildShop()
+        {
+            _shopPanel.Controls.Clear();
+            int y = 0;
+
+            foreach (int tier in _pools.Keys.OrderBy(t => t))
+            {
+                var pool = _pools[tier];
+
+                // Заголовок тира
+                var tierHeader = new Label
+                {
+                    Parent = _shopPanel,
+                    Text = $"Тир {tier}  |  Доступно: {pool.Available}/{pool.MaxPool}",
+                    Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                    ForeColor = Color.FromArgb(200, 200, 100),
+                    Location = new Point(5, y + 2),
+                    AutoSize = true,
+                };
+                y += 22;
+
+                // Сортируем: базовые сначала, потом грейды
+                var sorted = pool.Creatures.OrderBy(c => c.IsBase ? 0 : 1).ThenBy(c => c.Gold).ToList();
+
+                foreach (var creature in sorted)
+                {
+                    var card = BuildCreatureCard(creature, pool, y);
+                    card.Parent = _shopPanel;
+                    y += card.Height + 4;
+                }
+
+                y += 8;
+            }
+        }
+
+        private Panel BuildCreatureCard(CreatureInfo creature, TierPool pool, int yPos)
+        {
+            var card = new Panel
+            {
+                Location = new Point(0, yPos),
+                Size = new Size(595, 70),
+                BackColor = Color.FromArgb(42, 42, 60),
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+
+            // Иконка
+            var icon = new PictureBox
+            {
+                Parent = card,
+                Location = new Point(3, 3),
+                Size = new Size(64, 64),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Image = creature.Icon != null ? new Bitmap(creature.Icon) : null,
+                BackColor = Color.FromArgb(35, 35, 50),
+            };
+
+            // Имя
+            string gradeTag = creature.IsBase ? "" : " ★";
+            var nameLbl = new Label
+            {
+                Parent = card,
+                Text = creature.Name + gradeTag,
+                Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                ForeColor = creature.IsBase ? Color.White : Color.FromArgb(100, 255, 100),
+                Location = new Point(72, 3),
+                AutoSize = true,
+            };
+
+            // Статы
+            string shots = creature.Shots > 0 ? $" Выс:{creature.Shots}" : "";
+            var statsLbl = new Label
+            {
+                Parent = card,
+                Text = $"А:{creature.AttackSkill} З:{creature.DefenceSkill} У:{creature.MinDamage}-{creature.MaxDamage} HP:{creature.Health} С:{creature.Speed} И:{creature.Initiative}{shots}",
+                Font = new Font("Segoe UI", 8),
+                ForeColor = Color.LightGray,
+                Location = new Point(72, 22),
+                AutoSize = true,
+            };
+
+            // Цена
+            var priceLbl = new Label
+            {
+                Parent = card,
+                Text = $"Цена: {creature.Gold}g",
+                Font = new Font("Segoe UI", 8, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                Location = new Point(72, 42),
+                AutoSize = true,
+            };
+
+            // Кнопка купить (с NumericUpDown для количества)
+            bool canBuy = pool.Available > 0;
+            int maxBuy = pool.Available;
+
+            // Проверяем есть ли свободные слоты или слот с таким же юнитом
+            bool hasSlot = false;
+            for (int i = 0; i < 7; i++)
+            {
+                if (_slots[i].Creature == null || _slots[i].Creature.Id == creature.Id)
+                {
+                    hasSlot = true;
+                    break;
+                }
+            }
+
+            if (canBuy && hasSlot)
+            {
+                var nud = new NumericUpDown
+                {
+                    Parent = card,
+                    Location = new Point(420, 20),
+                    Size = new Size(60, 25),
+                    Minimum = 1,
+                    Maximum = maxBuy,
+                    Value = Math.Min(maxBuy, 1),
+                    Font = new Font("Segoe UI", 9),
+                    BackColor = Color.FromArgb(50, 50, 65),
+                    ForeColor = Color.White,
+                };
+
+                var btnBuy = new Button
+                {
+                    Parent = card,
+                    Text = "Купить",
+                    Font = new Font("Segoe UI", 8, FontStyle.Bold),
+                    Size = new Size(95, 28),
+                    Location = new Point(490, 18),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.FromArgb(50, 110, 50),
+                    ForeColor = Color.White,
+                    Tag = new object[] { creature, nud },
+                };
+                btnBuy.FlatAppearance.BorderSize = 0;
+                btnBuy.Click += BtnBuy_Click;
             }
             else
             {
-                var flags = TextFormatFlags.VerticalCenter | TextFormatFlags.Left;
-                if (e.ColumnIndex >= 2)
-                    flags = TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter;
-
-                TextRenderer.DrawText(e.Graphics, e.SubItem?.Text ?? "",
-                    _creatureList.Font, e.Bounds, Color.White, flags);
+                var noLbl = new Label
+                {
+                    Parent = card,
+                    Text = !hasSlot ? "Нет слотов" : "Нет в пуле",
+                    Font = new Font("Segoe UI", 8),
+                    ForeColor = Color.DarkGray,
+                    Location = new Point(490, 25),
+                    AutoSize = true,
+                };
             }
+
+            return card;
         }
 
-        private void SelectedChanged(object? sender, EventArgs e)
+        private void BtnBuy_Click(object? sender, EventArgs e)
         {
-            if (_creatureList.SelectedItems.Count == 0)
-                return;
+            var btn = sender as Button;
+            if (btn?.Tag is not object[] args) return;
+            var creature = (CreatureInfo)args[0];
+            var nud = (NumericUpDown)args[1];
+            int count = (int)nud.Value;
 
-            var creature = _creatureList.SelectedItems[0].Tag as CreatureInfo;
-            if (creature == null)
-                return;
-
-            _detailIcon.Image?.Dispose();
-            _detailIcon.Image = creature.Icon != null ? new Bitmap(creature.Icon) : null;
-
-            _detailName.Text = creature.Name;
-
-            var statsLines = new List<string>
+            int totalCost = creature.Gold * count;
+            if (!_gold.TrySpend(totalCost))
             {
-                $"Атака: {creature.AttackSkill}  |  Защита: {creature.DefenceSkill}",
-                $"Урон: {creature.MinDamage}-{creature.MaxDamage}  |  HP: {creature.Health}",
-                $"Скорость: {creature.Speed}  |  Инициатива: {creature.Initiative}",
-            };
-            if (creature.Shots > 0)
-                statsLines.Add($"Выстрелы: {creature.Shots}");
-            if (creature.Flying)
-                statsLines.Add("Летает");
-            statsLines.Add($"Золото: {creature.Gold}  |  Рост в неделю: {creature.WeeklyGrowth}");
-            statsLines.Add($"Фракция: {creature.Faction}");
-            _detailStats.Text = string.Join("\n", statsLines);
+                MessageBox.Show("Недостаточно золота!", "Покупка", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
 
-            _detailUpgrades.Text = creature.Upgrades.Count > 0
-                ? "Улучшения: " + string.Join(", ", creature.Upgrades)
-                : "Улучшения: нет";
+            int tier = creature.CreatureTier;
+            if (_pools.TryGetValue(tier, out var pool))
+                pool.Available -= count;
 
-            _detailAbilities.Text = creature.Abilities.Count > 0
-                ? "Способности:\n" + string.Join("\n", creature.Abilities.Select(a => "  " + a))
-                : "Способности: нет";
+            // Найти слот: существующий с таким юнитом или пустой
+            int targetSlot = -1;
+            for (int i = 0; i < 7; i++)
+            {
+                if (_slots[i].Creature?.Id == creature.Id)
+                {
+                    targetSlot = i;
+                    break;
+                }
+            }
+            if (targetSlot == -1)
+            {
+                for (int i = 0; i < 7; i++)
+                {
+                    if (_slots[i].Creature == null)
+                    {
+                        targetSlot = i;
+                        break;
+                    }
+                }
+            }
+            if (targetSlot == -1)
+            {
+                _gold.Refund(totalCost);
+                if (_pools.TryGetValue(tier, out var p)) p.Available += count;
+                MessageBox.Show("Нет свободных слотов!", "Покупка", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            _slots[targetSlot].Creature = creature;
+            _slots[targetSlot].Count += count;
+
+            RefreshSlot(targetSlot);
+            RebuildShop();
         }
 
-        private static Image CreatePlaceholder(int w, int h)
+        private void RefreshGold()
         {
-            var bmp = new Bitmap(w, h);
-            using var g = Graphics.FromImage(bmp);
-            g.Clear(Color.FromArgb(50, 50, 65));
-            g.DrawString("?", new Font("Segoe UI", 20, FontStyle.Bold),
-                Brushes.Gray, w / 2 - 10, h / 2 - 16);
-            return bmp;
+            if (_goldLabel != null)
+                _goldLabel.Text = $"Золото: {_gold.Remaining} / {_gold.Total}";
         }
     }
 }
