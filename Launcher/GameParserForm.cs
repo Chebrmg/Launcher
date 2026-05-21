@@ -268,8 +268,9 @@ namespace Launcher
             {
                 var parser = new GameDataParser(_gameRoot);
                 parser.BuildVfs();
+                int vfsCount = parser.VfsCount;
                 var creatures = parser.ParseCreatures();
-                return creatures;
+                return (creatures, vfsCount);
             }).ContinueWith(task =>
             {
                 if (task.IsFaulted)
@@ -278,7 +279,15 @@ namespace Launcher
                     return;
                 }
 
-                _allCreatures = task.Result;
+                var (creatures, vfsCount) = task.Result;
+                _allCreatures = creatures;
+
+                if (_allCreatures.Count == 0)
+                {
+                    _loadingLabel.Text = $"Юниты не найдены. Файлов в архивах: {vfsCount}\nПуть: {_gameRoot}";
+                    return;
+                }
+
                 _loadingLabel.Visible = false;
                 FilterCreatures();
             }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
