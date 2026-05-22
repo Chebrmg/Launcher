@@ -231,6 +231,13 @@ namespace Launcher
             };
         }
 
+        private List<SkillInfo> _allSkills = new();
+        private List<HeroClassInfo> _heroClasses = new();
+        private List<HeroInfo> _allHeroes = new();
+        private List<ArtifactInfo> _allArtifacts = new();
+        private List<CreatureInfo> _creatures1 = new();
+        private List<CreatureInfo> _creatures2 = new();
+
         private void BtnStart_Click(object? sender, EventArgs e)
         {
             _faction1 = _cmbFaction1.SelectedItem?.ToString() ?? "";
@@ -253,7 +260,10 @@ namespace Launcher
                 var c1 = parser.ParseCreatures(new List<string> { _faction1 });
                 var c2 = parser.ParseCreatures(new List<string> { _faction2 });
                 var artifacts = parser.ParseArtifacts();
-                return (c1, c2, artifacts, parser.DiagInfo);
+                var skills = parser.ParseSkills();
+                var heroClasses = parser.ParseHeroClasses();
+                var heroes = parser.ParseHeroes();
+                return (c1, c2, artifacts, skills, heroClasses, heroes, parser.DiagInfo);
             }).ContinueWith(task =>
             {
                 if (task.IsFaulted)
@@ -264,7 +274,7 @@ namespace Launcher
                     return;
                 }
 
-                var (c1, c2, artifacts, diag) = task.Result;
+                var (c1, c2, artifacts, skills, heroClasses, heroes, diag) = task.Result;
                 if (c1.Count == 0 && c2.Count == 0)
                 {
                     _selectionStatus.Text = "Юниты не найдены.\n\nДиагностика:\n" + diag;
@@ -273,11 +283,231 @@ namespace Launcher
                     return;
                 }
 
-                ShowMainContent(c1, c2, artifacts);
+                _creatures1 = c1;
+                _creatures2 = c2;
+                _allArtifacts = artifacts;
+                _allSkills = skills;
+                _heroClasses = heroClasses;
+                _allHeroes = heroes;
+
+                ShowHeroSelection();
             }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
         }
 
-        private void ShowMainContent(List<CreatureInfo> creatures1, List<CreatureInfo> creatures2, List<ArtifactInfo> artifacts)
+        private void ShowHeroSelection()
+        {
+            _selectionPanel.Controls.Clear();
+
+            var rng = new Random();
+
+            string class1 = GameDataParser.FactionToHeroClass.TryGetValue(_faction1, out var hc1) ? hc1 : "";
+            string class2 = GameDataParser.FactionToHeroClass.TryGetValue(_faction2, out var hc2) ? hc2 : "";
+
+            var heroes1 = _allHeroes.Where(h => h.HeroClass == class1).OrderBy(_ => rng.Next()).Take(2).ToList();
+            var heroes2 = _allHeroes.Where(h => h.HeroClass == class2).OrderBy(_ => rng.Next()).Take(2).ToList();
+
+            new Label
+            {
+                Parent = _selectionPanel,
+                Text = "Выберите героев",
+                Font = new Font("Segoe UI", 18, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                AutoSize = true,
+                Location = new Point(420, 30),
+            };
+
+            HeroInfo? selectedHero1 = null;
+            HeroInfo? selectedHero2 = null;
+
+            void UpdateSelection(Panel panel, Panel? otherPanel)
+            {
+                panel.BackColor = Color.FromArgb(60, 120, 60);
+                if (otherPanel != null) otherPanel.BackColor = Color.FromArgb(50, 50, 70);
+            }
+
+            new Label
+            {
+                Parent = _selectionPanel,
+                Text = $"Игрок 1: {_faction1}",
+                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                ForeColor = Color.FromArgb(100, 180, 255),
+                AutoSize = true,
+                Location = new Point(50, 80),
+            };
+
+            int yOff = 110;
+            Panel? p1a = null, p1b = null;
+            for (int i = 0; i < heroes1.Count; i++)
+            {
+                var hero = heroes1[i];
+                var panel = BuildHeroCard(hero, new Point(50, yOff + i * 140));
+                panel.Parent = _selectionPanel;
+                int idx = i;
+                panel.Click += (s, ev) =>
+                {
+                    selectedHero1 = hero;
+                    UpdateSelection(panel, idx == 0 ? p1b : p1a);
+                };
+                foreach (Control c in panel.Controls)
+                    c.Click += (s, ev) =>
+                    {
+                        selectedHero1 = hero;
+                        UpdateSelection(panel, idx == 0 ? p1b : p1a);
+                    };
+                if (i == 0) p1a = panel; else p1b = panel;
+            }
+
+            new Label
+            {
+                Parent = _selectionPanel,
+                Text = $"Игрок 2: {_faction2}",
+                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 130, 130),
+                AutoSize = true,
+                Location = new Point(580, 80),
+            };
+
+            Panel? p2a = null, p2b = null;
+            for (int i = 0; i < heroes2.Count; i++)
+            {
+                var hero = heroes2[i];
+                var panel = BuildHeroCard(hero, new Point(580, yOff + i * 140));
+                panel.Parent = _selectionPanel;
+                int idx = i;
+                panel.Click += (s, ev) =>
+                {
+                    selectedHero2 = hero;
+                    UpdateSelection(panel, idx == 0 ? p2b : p2a);
+                };
+                foreach (Control c in panel.Controls)
+                    c.Click += (s, ev) =>
+                    {
+                        selectedHero2 = hero;
+                        UpdateSelection(panel, idx == 0 ? p2b : p2a);
+                    };
+                if (i == 0) p2a = panel; else p2b = panel;
+            }
+
+            var btnConfirm = new Button
+            {
+                Parent = _selectionPanel,
+                Text = "Подтвердить",
+                Font = new Font("Segoe UI", 13, FontStyle.Bold),
+                Size = new Size(200, 45),
+                Location = new Point(450, 420),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(50, 120, 50),
+                ForeColor = Color.White,
+            };
+            btnConfirm.FlatAppearance.BorderSize = 0;
+            btnConfirm.Click += (s, ev) =>
+            {
+                if (selectedHero1 == null || selectedHero2 == null)
+                {
+                    MessageBox.Show("Выберите героя для каждого игрока!", "Парсер", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                ShowMainContent(_creatures1, _creatures2, _allArtifacts, selectedHero1, selectedHero2);
+            };
+
+            if (heroes1.Count > 0) { selectedHero1 = heroes1[0]; if (p1a != null) p1a.BackColor = Color.FromArgb(60, 120, 60); }
+            if (heroes2.Count > 0) { selectedHero2 = heroes2[0]; if (p2a != null) p2a.BackColor = Color.FromArgb(60, 120, 60); }
+        }
+
+        private Panel BuildHeroCard(HeroInfo hero, Point location)
+        {
+            var panel = new Panel
+            {
+                Location = location,
+                Size = new Size(480, 125),
+                BackColor = Color.FromArgb(50, 50, 70),
+                BorderStyle = BorderStyle.FixedSingle,
+                Cursor = Cursors.Hand,
+            };
+
+            var icon = new PictureBox
+            {
+                Parent = panel,
+                Location = new Point(5, 5),
+                Size = new Size(80, 80),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.FromArgb(35, 35, 50),
+                Cursor = Cursors.Hand,
+            };
+            if (hero.FaceIcon != null) icon.Image = new Bitmap(hero.FaceIcon);
+
+            new Label
+            {
+                Parent = panel,
+                Text = hero.Name,
+                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                ForeColor = Color.White,
+                Location = new Point(95, 5),
+                AutoSize = true,
+                Cursor = Cursors.Hand,
+            };
+
+            new Label
+            {
+                Parent = panel,
+                Text = hero.SpecializationName,
+                Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                Location = new Point(95, 30),
+                AutoSize = true,
+                Cursor = Cursors.Hand,
+            };
+
+            new Label
+            {
+                Parent = panel,
+                Text = $"А:{hero.Offence} З:{hero.Defence} С:{hero.Spellpower} М:{hero.Knowledge}",
+                Font = new Font("Segoe UI", 9),
+                ForeColor = Color.LightGray,
+                Location = new Point(95, 52),
+                AutoSize = true,
+                Cursor = Cursors.Hand,
+            };
+
+            string startSkills = "";
+            if (!string.IsNullOrEmpty(hero.PrimarySkillId))
+            {
+                var sk = _allSkills.FirstOrDefault(s => s.Id == hero.PrimarySkillId);
+                startSkills += $"Расовый: {sk?.GetName() ?? hero.PrimarySkillId}";
+            }
+            foreach (var (sid, mastery) in hero.Skills)
+            {
+                var sk = _allSkills.FirstOrDefault(s => s.Id == sid);
+                if (startSkills.Length > 0) startSkills += ", ";
+                startSkills += sk?.GetName() ?? sid;
+            }
+
+            new Label
+            {
+                Parent = panel,
+                Text = startSkills,
+                Font = new Font("Segoe UI", 8),
+                ForeColor = Color.Gray,
+                Location = new Point(95, 72),
+                AutoSize = true,
+                MaximumSize = new Size(370, 0),
+                Cursor = Cursors.Hand,
+            };
+
+            icon.DoubleClick += (s, ev) => ShowHeroDetail(hero);
+            panel.DoubleClick += (s, ev) => ShowHeroDetail(hero);
+
+            return panel;
+        }
+
+        private void ShowHeroDetail(HeroInfo hero)
+        {
+            using var form = new HeroDetailForm(hero);
+            form.ShowDialog();
+        }
+
+        private void ShowMainContent(List<CreatureInfo> creatures1, List<CreatureInfo> creatures2,
+            List<ArtifactInfo> artifacts, HeroInfo hero1, HeroInfo hero2)
         {
             _selectionPanel.Visible = false;
 
@@ -292,9 +522,9 @@ namespace Launcher
             var btnPlayer1 = new Button
             {
                 Parent = playerPanel,
-                Text = $"Игрок 1: {_faction1}",
+                Text = $"Игрок 1: {_faction1} — {hero1.Name}",
                 Font = new Font("Segoe UI", 11, FontStyle.Bold),
-                Size = new Size(250, 34),
+                Size = new Size(300, 34),
                 Location = new Point(3, 3),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(100, 180, 255),
@@ -305,10 +535,10 @@ namespace Launcher
             var btnPlayer2 = new Button
             {
                 Parent = playerPanel,
-                Text = $"Игрок 2: {_faction2}",
+                Text = $"Игрок 2: {_faction2} — {hero2.Name}",
                 Font = new Font("Segoe UI", 11, FontStyle.Bold),
-                Size = new Size(250, 34),
-                Location = new Point(260, 3),
+                Size = new Size(300, 34),
+                Location = new Point(310, 3),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(60, 60, 80),
                 ForeColor = Color.White,
@@ -325,22 +555,29 @@ namespace Launcher
 
             var tabArmy1 = new TabPage("Армия") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
             var tabArt1 = new TabPage("Артефакты") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
+            var tabLvl1 = new TabPage("Прокачка") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
             var tabSpells1 = new TabPage("Заклинания") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
             tabSpells1.Controls.Add(new Label { Text = "В разработке...", ForeColor = Color.Gray, Font = new Font("Segoe UI", 14), AutoSize = true, Location = new Point(20, 20) });
 
             var tabArmy2 = new TabPage("Армия") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
             var tabArt2 = new TabPage("Артефакты") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
+            var tabLvl2 = new TabPage("Прокачка") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
             var tabSpells2 = new TabPage("Заклинания") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
             tabSpells2.Controls.Add(new Label { Text = "В разработке...", ForeColor = Color.Gray, Font = new Font("Segoe UI", 14), AutoSize = true, Location = new Point(20, 20) });
 
-            // Создаём вкладки — UI строится один раз здесь
+            var hci1 = _heroClasses.FirstOrDefault(c => c.Id == hero1.HeroClass);
+            var hci2 = _heroClasses.FirstOrDefault(c => c.Id == hero2.HeroClass);
+
             new ArmyPurchaseTab(tabArmy1, creatures1, goldState1);
             new ArtifactTab(tabArt1, artifacts, goldState1);
+            new LevelingTab(tabLvl1, hero1, _allSkills, hci1, goldState1);
             new ArmyPurchaseTab(tabArmy2, creatures2, goldState2);
             new ArtifactTab(tabArt2, artifacts, goldState2);
+            new LevelingTab(tabLvl2, hero2, _allSkills, hci2, goldState2);
 
             _tabs.TabPages.Add(tabArmy1);
             _tabs.TabPages.Add(tabArt1);
+            _tabs.TabPages.Add(tabLvl1);
             _tabs.TabPages.Add(tabSpells1);
 
             btnPlayer1.Click += (s, ev) =>
@@ -349,7 +586,7 @@ namespace Launcher
                 btnPlayer2.BackColor = Color.FromArgb(60, 60, 80); btnPlayer2.ForeColor = Color.White;
                 int idx = _tabs.SelectedIndex;
                 _tabs.TabPages.Clear();
-                _tabs.TabPages.AddRange(new[] { tabArmy1, tabArt1, tabSpells1 });
+                _tabs.TabPages.AddRange(new[] { tabArmy1, tabArt1, tabLvl1, tabSpells1 });
                 if (idx >= 0 && idx < _tabs.TabCount) _tabs.SelectedIndex = idx;
             };
 
@@ -359,7 +596,7 @@ namespace Launcher
                 btnPlayer1.BackColor = Color.FromArgb(60, 60, 80); btnPlayer1.ForeColor = Color.White;
                 int idx = _tabs.SelectedIndex;
                 _tabs.TabPages.Clear();
-                _tabs.TabPages.AddRange(new[] { tabArmy2, tabArt2, tabSpells2 });
+                _tabs.TabPages.AddRange(new[] { tabArmy2, tabArt2, tabLvl2, tabSpells2 });
                 if (idx >= 0 && idx < _tabs.TabCount) _tabs.SelectedIndex = idx;
             };
         }
@@ -1543,6 +1780,905 @@ namespace Launcher
                     MaximumSize = new Size(390, 0)
                 };
             }
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════════
+    //  КАРТОЧКА ГЕРОЯ
+    // ═════════════════════════════════════════════════════════════════════════════
+    internal class HeroDetailForm : Form
+    {
+        public HeroDetailForm(HeroInfo hero)
+        {
+            Text = hero.Name;
+            Size = new Size(420, 350);
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            BackColor = Color.FromArgb(30, 30, 40);
+
+            var icon = new PictureBox
+            {
+                Parent = this,
+                Location = new Point(15, 15),
+                Size = new Size(100, 100),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.FromArgb(45, 45, 60),
+            };
+            if (hero.FaceIcon != null) icon.Image = new Bitmap(hero.FaceIcon);
+
+            var nameFont = new Font("Segoe UI", 16, FontStyle.Bold);
+            new Label { Parent = this, Text = hero.Name, Font = nameFont, ForeColor = Color.White, Location = new Point(125, 15), AutoSize = true };
+
+            var specFont = new Font("Segoe UI", 11, FontStyle.Bold);
+            new Label { Parent = this, Text = hero.SpecializationName, Font = specFont, ForeColor = Color.FromArgb(255, 220, 100), Location = new Point(125, 50), AutoSize = true };
+
+            var statFont = new Font("Segoe UI", 10);
+            new Label
+            {
+                Parent = this,
+                Text = $"Атака: {hero.Offence}  Защита: {hero.Defence}  Сила магии: {hero.Spellpower}  Знания: {hero.Knowledge}",
+                Font = statFont,
+                ForeColor = Color.LightGray,
+                Location = new Point(125, 80),
+                AutoSize = true,
+            };
+
+            new Panel { Parent = this, Location = new Point(15, 125), Size = new Size(375, 1), BackColor = Color.FromArgb(80, 80, 100) };
+
+            var descFont = new Font("Segoe UI", 9);
+            new Label
+            {
+                Parent = this,
+                Text = hero.SpecializationDesc,
+                Font = descFont,
+                ForeColor = Color.LightGray,
+                Location = new Point(15, 135),
+                AutoSize = true,
+                MaximumSize = new Size(375, 0),
+            };
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════════
+    //  ВКЛАДКА ПРОКАЧКИ
+    // ═════════════════════════════════════════════════════════════════════════════
+    internal class LevelingTab
+    {
+        private readonly TabPage _tab;
+        private readonly HeroInfo _hero;
+        private readonly List<SkillInfo> _allSkills;
+        private readonly HeroClassInfo? _heroClassInfo;
+        private readonly GoldState _gold;
+        private readonly Random _rng = new();
+
+        private int _heroLevel = 1;
+        private int _levelUpCount = 0;
+        private int _bonusOffence, _bonusDefence, _bonusSpellpower, _bonusKnowledge;
+
+        private readonly List<(string SkillId, int Mastery)> _takenSkills = new();
+        private readonly List<string> _takenPerks = new();
+        private string _racialSkillId = "";
+        private int _racialMastery;
+
+        private Label _levelLabel = null!;
+        private Label _statsLabel = null!;
+        private Panel _skillsGrid = null!;
+        private Button _levelUpBtn = null!;
+        private Label _goldCostLabel = null!;
+
+        private const int MaxNonRacialSkills = 5;
+        private const int MaxLevel = 20;
+
+        public LevelingTab(TabPage tab, HeroInfo hero, List<SkillInfo> allSkills, HeroClassInfo? heroClassInfo, GoldState gold)
+        {
+            _tab = tab;
+            _hero = hero;
+            _allSkills = allSkills;
+            _heroClassInfo = heroClassInfo;
+            _gold = gold;
+
+            InitializeHeroState();
+            BuildUI();
+        }
+
+        private void InitializeHeroState()
+        {
+            _racialSkillId = _hero.PrimarySkillId;
+            _racialMastery = MasteryToInt(_hero.PrimarySkillMastery);
+
+            foreach (var (sid, mastery) in _hero.Skills)
+                _takenSkills.Add((sid, MasteryToInt(mastery)));
+
+            foreach (var pid in _hero.PerkIds)
+                _takenPerks.Add(pid);
+
+            _bonusOffence = 0;
+            _bonusDefence = 0;
+            _bonusSpellpower = 0;
+            _bonusKnowledge = 0;
+        }
+
+        private static int MasteryToInt(string m) => m switch
+        {
+            "MASTERY_BASIC" => 0,
+            "MASTERY_ADVANCED" => 1,
+            "MASTERY_EXPERT" => 2,
+            _ => 0,
+        };
+
+        internal static string MasteryName(int m) => m switch
+        {
+            0 => "Основа",
+            1 => "Умелый",
+            2 => "Искусный",
+            _ => "Основа",
+        };
+
+        private void BuildUI()
+        {
+            var mainPanel = new DoubleBufferedPanel
+            {
+                Parent = _tab,
+                Dock = DockStyle.Fill,
+                AutoScroll = true,
+                BackColor = Color.FromArgb(30, 30, 40),
+            };
+
+            // Hero info area
+            var heroPanel = new Panel
+            {
+                Parent = mainPanel,
+                Location = new Point(10, 10),
+                Size = new Size(350, 100),
+                BackColor = Color.FromArgb(40, 40, 55),
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+
+            var faceBox = new PictureBox
+            {
+                Parent = heroPanel,
+                Location = new Point(5, 5),
+                Size = new Size(70, 70),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.FromArgb(35, 35, 50),
+                Cursor = Cursors.Hand,
+            };
+            if (_hero.FaceIcon != null) faceBox.Image = new Bitmap(_hero.FaceIcon);
+            faceBox.DoubleClick += (s, ev) =>
+            {
+                using var form = new HeroDetailForm(_hero);
+                form.ShowDialog();
+            };
+
+            new Label
+            {
+                Parent = heroPanel,
+                Text = _hero.Name,
+                Font = new Font("Segoe UI", 13, FontStyle.Bold),
+                ForeColor = Color.White,
+                Location = new Point(82, 5),
+                AutoSize = true,
+                Cursor = Cursors.Hand,
+            };
+
+            _levelLabel = new Label
+            {
+                Parent = heroPanel,
+                Text = $"Уровень: {_heroLevel}",
+                Font = new Font("Segoe UI", 10),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                Location = new Point(82, 30),
+                AutoSize = true,
+            };
+
+            _statsLabel = new Label
+            {
+                Parent = heroPanel,
+                Font = new Font("Segoe UI", 9),
+                ForeColor = Color.LightGray,
+                Location = new Point(82, 50),
+                AutoSize = true,
+            };
+            UpdateStatsLabel();
+
+            new Label
+            {
+                Parent = heroPanel,
+                Text = _hero.SpecializationName,
+                Font = new Font("Segoe UI", 8, FontStyle.Italic),
+                ForeColor = Color.FromArgb(180, 180, 200),
+                Location = new Point(82, 72),
+                AutoSize = true,
+            };
+
+            // Level up area
+            int lvlY = 10;
+            _levelUpBtn = new Button
+            {
+                Parent = mainPanel,
+                Text = "Повысить уровень",
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                Size = new Size(180, 35),
+                Location = new Point(380, lvlY),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(50, 120, 50),
+                ForeColor = Color.White,
+            };
+            _levelUpBtn.FlatAppearance.BorderSize = 0;
+            _levelUpBtn.Click += (s, ev) => DoLevelUp();
+
+            _goldCostLabel = new Label
+            {
+                Parent = mainPanel,
+                Font = new Font("Segoe UI", 9),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                Location = new Point(380, lvlY + 40),
+                AutoSize = true,
+            };
+            UpdateGoldCostLabel();
+
+            _gold.Changed += () => UpdateGoldCostLabel();
+
+            // Skills grid
+            _skillsGrid = new DoubleBufferedPanel
+            {
+                Parent = mainPanel,
+                Location = new Point(10, 120),
+                Size = new Size(750, 450),
+                AutoScroll = true,
+                BackColor = Color.FromArgb(30, 30, 40),
+            };
+
+            RebuildSkillsGrid();
+        }
+
+        private void UpdateStatsLabel()
+        {
+            int a = _hero.Offence + _bonusOffence;
+            int d = _hero.Defence + _bonusDefence;
+            int s = _hero.Spellpower + _bonusSpellpower;
+            int k = _hero.Knowledge + _bonusKnowledge;
+            _statsLabel.Text = $"А:{a} З:{d} С:{s} М:{k}";
+        }
+
+        private int GetLevelUpCost()
+        {
+            if (_heroLevel < MaxLevel) return 0;
+            int extra = _heroLevel - MaxLevel;
+            return 5000 + 1000 * extra;
+        }
+
+        private void UpdateGoldCostLabel()
+        {
+            int cost = GetLevelUpCost();
+            _goldCostLabel.Text = cost == 0 ? "Бесплатно" : $"Стоимость: {cost}g (Осталось: {_gold.Remaining}g)";
+            _levelUpBtn.Enabled = cost == 0 || _gold.Remaining >= cost;
+        }
+
+        private void DoLevelUp()
+        {
+            int cost = GetLevelUpCost();
+            if (cost > 0 && !_gold.TrySpend(cost)) return;
+
+            _heroLevel++;
+            _levelUpCount++;
+            _levelLabel.Text = $"Уровень: {_heroLevel}";
+
+            RollStat();
+            UpdateStatsLabel();
+            UpdateGoldCostLabel();
+
+            ShowLevelUpDialog();
+        }
+
+        private void RollStat()
+        {
+            if (_heroClassInfo == null) { _bonusOffence++; return; }
+
+            int total = _heroClassInfo.OffenceProb + _heroClassInfo.DefenceProb
+                      + _heroClassInfo.SpellpowerProb + _heroClassInfo.KnowledgeProb;
+            if (total <= 0) { _bonusOffence++; return; }
+
+            int roll = _rng.Next(total);
+            if (roll < _heroClassInfo.OffenceProb) _bonusOffence++;
+            else if (roll < _heroClassInfo.OffenceProb + _heroClassInfo.DefenceProb) _bonusDefence++;
+            else if (roll < _heroClassInfo.OffenceProb + _heroClassInfo.DefenceProb + _heroClassInfo.SpellpowerProb) _bonusSpellpower++;
+            else _bonusKnowledge++;
+        }
+
+        private void ShowLevelUpDialog()
+        {
+            var options = GenerateLevelUpOptions();
+            if (options.Count == 0) { RebuildSkillsGrid(); return; }
+
+            using var dlg = new LevelUpForm(options, _allSkills);
+            if (dlg.ShowDialog() != DialogResult.OK || dlg.SelectedOption == null) return;
+
+            ApplyLevelUpOption(dlg.SelectedOption);
+            RebuildSkillsGrid();
+        }
+
+        private List<LevelUpOption> GenerateLevelUpOptions()
+        {
+            var options = new List<LevelUpOption>();
+            var heroClass = _hero.HeroClass;
+
+            var allTakenSkillIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!string.IsNullOrEmpty(_racialSkillId)) allTakenSkillIds.Add(_racialSkillId);
+            foreach (var (sid, _) in _takenSkills) allTakenSkillIds.Add(sid);
+
+            // Available regular skills (HeroClass = NONE, not yet taken)
+            var availableNewSkills = _allSkills
+                .Where(s => s.IsSkill && !s.IsRacial && !allTakenSkillIds.Contains(s.Id))
+                .Where(s => _heroClassInfo == null || (_heroClassInfo.SkillProbs.TryGetValue(s.Id, out int p) && p > 0))
+                .ToList();
+
+            bool hasOpenSlots = _takenSkills.Count < MaxNonRacialSkills;
+
+            // Skills that can be advanced
+            var advanceable = new List<(string SkillId, int CurrentMastery, bool IsRacial)>();
+            if (!string.IsNullOrEmpty(_racialSkillId) && _racialMastery < 2)
+                advanceable.Add((_racialSkillId, _racialMastery, true));
+            foreach (var (sid, m) in _takenSkills)
+            {
+                var sk = _allSkills.FirstOrDefault(s => s.Id == sid);
+                int maxM = (sk != null && sk.MasteryLevels >= 4) ? 3 : 2;
+                if (m < maxM) advanceable.Add((sid, m, false));
+            }
+
+            // LEFT-UPPER: new skill or advance
+            if (hasOpenSlots && availableNewSkills.Count > 0)
+            {
+                var pick = PickByProb(availableNewSkills);
+                if (pick != null) options.Add(new LevelUpOption { Type = LevelUpType.NewSkill, SkillId = pick.Id });
+            }
+            else if (advanceable.Count > 0)
+            {
+                var adv = advanceable[_rng.Next(advanceable.Count)];
+                options.Add(new LevelUpOption { Type = LevelUpType.AdvanceSkill, SkillId = adv.SkillId, NewMastery = adv.CurrentMastery + 1 });
+                advanceable.Remove(adv);
+            }
+
+            // LEFT-LOWER: advance skill or different new skill
+            if (advanceable.Count > 0)
+            {
+                var adv = advanceable[_rng.Next(advanceable.Count)];
+                options.Add(new LevelUpOption { Type = LevelUpType.AdvanceSkill, SkillId = adv.SkillId, NewMastery = adv.CurrentMastery + 1 });
+            }
+            else if (hasOpenSlots && availableNewSkills.Count > 1)
+            {
+                var usedIds = options.Where(o => o.Type == LevelUpType.NewSkill).Select(o => o.SkillId).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var remaining = availableNewSkills.Where(s => !usedIds.Contains(s.Id)).ToList();
+                if (remaining.Count > 0)
+                {
+                    var pick = PickByProb(remaining);
+                    if (pick != null) options.Add(new LevelUpOption { Type = LevelUpType.NewSkill, SkillId = pick.Id });
+                }
+            }
+
+            // Get available perks
+            var takenPerkSet = new HashSet<string>(_takenPerks, StringComparer.OrdinalIgnoreCase);
+            var availPerks = GetAvailablePerks(heroClass, allTakenSkillIds, takenPerkSet);
+
+            var primaryPerks = availPerks.Where(p => p.IsPrimaryPerk).ToList();
+            var secondaryPerks = availPerks.Where(p => p.IsSecondaryPerk).ToList();
+
+            // RIGHT-UPPER: primary perk, or secondary if no primaries
+            if (primaryPerks.Count > 0)
+            {
+                var pick = primaryPerks[_rng.Next(primaryPerks.Count)];
+                options.Add(new LevelUpOption { Type = LevelUpType.Perk, PerkId = pick.Id });
+                primaryPerks.Remove(pick);
+            }
+            else if (secondaryPerks.Count > 0)
+            {
+                var pick = secondaryPerks[_rng.Next(secondaryPerks.Count)];
+                options.Add(new LevelUpOption { Type = LevelUpType.Perk, PerkId = pick.Id });
+                secondaryPerks.Remove(pick);
+            }
+
+            // RIGHT-LOWER: secondary perk, or different primary
+            if (secondaryPerks.Count > 0)
+            {
+                var pick = secondaryPerks[_rng.Next(secondaryPerks.Count)];
+                options.Add(new LevelUpOption { Type = LevelUpType.Perk, PerkId = pick.Id });
+            }
+            else if (primaryPerks.Count > 0)
+            {
+                var pick = primaryPerks[_rng.Next(primaryPerks.Count)];
+                options.Add(new LevelUpOption { Type = LevelUpType.Perk, PerkId = pick.Id });
+            }
+
+            return options;
+        }
+
+        private List<SkillInfo> GetAvailablePerks(string heroClass, HashSet<string> takenSkillIds, HashSet<string> takenPerkIds)
+        {
+            var result = new List<SkillInfo>();
+
+            foreach (var perk in _allSkills.Where(s => s.IsPerk))
+            {
+                if (takenPerkIds.Contains(perk.Id)) continue;
+
+                // Must belong to a taken skill
+                if (string.IsNullOrEmpty(perk.BasicSkillId) || perk.BasicSkillId == "HERO_SKILL_NONE") continue;
+                if (!takenSkillIds.Contains(perk.BasicSkillId)) continue;
+
+                // Check perk slot availability
+                if (!HasPerkSlot(perk.BasicSkillId)) continue;
+
+                // Class filter: perk HeroClass must be NONE or match hero class
+                if (perk.IsRacial && perk.HeroClass != heroClass) continue;
+
+                // Check prerequisites for this class
+                if (perk.IsSecondaryPerk)
+                {
+                    var classPrereqs = perk.Prerequisites.Where(p => p.HeroClass == heroClass).ToList();
+                    if (classPrereqs.Count == 0 && perk.Prerequisites.Count > 0) continue;
+                    if (classPrereqs.Count > 0)
+                    {
+                        bool met = classPrereqs.Any(cp => cp.DependencyIds.All(d => takenPerkIds.Contains(d)));
+                        if (!met) continue;
+                    }
+                }
+
+                result.Add(perk);
+            }
+
+            return result;
+        }
+
+        private bool HasPerkSlot(string skillId)
+        {
+            int mastery;
+            bool isRacial;
+            if (skillId.Equals(_racialSkillId, StringComparison.OrdinalIgnoreCase))
+            {
+                mastery = _racialMastery;
+                isRacial = true;
+            }
+            else
+            {
+                var entry = _takenSkills.FirstOrDefault(t => t.SkillId.Equals(skillId, StringComparison.OrdinalIgnoreCase));
+                if (entry.SkillId == null) return false;
+                mastery = entry.Mastery;
+                isRacial = false;
+            }
+
+            int maxSlots = mastery + 1;
+            int usedSlots = _takenPerks.Count(pid =>
+            {
+                var p = _allSkills.FirstOrDefault(s => s.Id == pid);
+                return p != null && p.BasicSkillId.Equals(skillId, StringComparison.OrdinalIgnoreCase);
+            });
+
+            // Center perks: if racial skill is expert (3 slots), center perk doesn't use slot
+            if (isRacial && mastery >= 2)
+            {
+                int centerPerkCount = _takenPerks.Count(pid =>
+                {
+                    var p = _allSkills.FirstOrDefault(s => s.Id == pid);
+                    return p != null && p.BasicSkillId.Equals(skillId, StringComparison.OrdinalIgnoreCase) && p.IsSpecialPerk;
+                });
+                usedSlots -= centerPerkCount;
+            }
+
+            return usedSlots < maxSlots;
+        }
+
+        private SkillInfo? PickByProb(List<SkillInfo> skills)
+        {
+            if (skills.Count == 0) return null;
+            if (_heroClassInfo == null) return skills[_rng.Next(skills.Count)];
+
+            var weighted = new List<(SkillInfo s, int w)>();
+            foreach (var s in skills)
+            {
+                int prob = _heroClassInfo.SkillProbs.TryGetValue(s.Id, out int p) ? p : 1;
+                if (prob > 0) weighted.Add((s, prob));
+            }
+            if (weighted.Count == 0) return skills[_rng.Next(skills.Count)];
+
+            int total = weighted.Sum(w => w.w);
+            int roll = _rng.Next(total);
+            int acc = 0;
+            foreach (var (s, w) in weighted)
+            {
+                acc += w;
+                if (roll < acc) return s;
+            }
+            return weighted[^1].s;
+        }
+
+        private void ApplyLevelUpOption(LevelUpOption option)
+        {
+            switch (option.Type)
+            {
+                case LevelUpType.NewSkill:
+                    _takenSkills.Add((option.SkillId, 0));
+                    break;
+                case LevelUpType.AdvanceSkill:
+                    if (option.SkillId.Equals(_racialSkillId, StringComparison.OrdinalIgnoreCase))
+                    {
+                        _racialMastery = option.NewMastery;
+                    }
+                    else
+                    {
+                        int idx = _takenSkills.FindIndex(t => t.SkillId.Equals(option.SkillId, StringComparison.OrdinalIgnoreCase));
+                        if (idx >= 0) _takenSkills[idx] = (_takenSkills[idx].SkillId, option.NewMastery);
+                    }
+                    break;
+                case LevelUpType.Perk:
+                    _takenPerks.Add(option.PerkId);
+                    break;
+            }
+        }
+
+        private void RebuildSkillsGrid()
+        {
+            _skillsGrid.Controls.Clear();
+            int y = 5;
+            int iconSize = 52;
+            int gap = 6;
+
+            void AddSkillRow(string skillId, int mastery, bool isRacial)
+            {
+                var skill = _allSkills.FirstOrDefault(s => s.Id == skillId);
+                if (skill == null) return;
+
+                var skillIcon = new PictureBox
+                {
+                    Parent = _skillsGrid,
+                    Location = new Point(5, y),
+                    Size = new Size(iconSize, iconSize),
+                    SizeMode = PictureBoxSizeMode.Zoom,
+                    BackColor = Color.FromArgb(45, 45, 60),
+                    BorderStyle = BorderStyle.FixedSingle,
+                    Cursor = Cursors.Hand,
+                };
+                var sImg = skill.GetIcon(mastery);
+                if (sImg != null) skillIcon.Image = new Bitmap(sImg);
+
+                var tip = new ToolTip();
+                string skillName = skill.GetName(mastery);
+                string label = isRacial ? $"[Расовый] {skillName} ({MasteryName(mastery)})" : $"{skillName} ({MasteryName(mastery)})";
+                tip.SetToolTip(skillIcon, label);
+
+                skillIcon.DoubleClick += (s, ev) => ShowSkillDetail(skill, mastery);
+
+                // Arrow
+                new Label
+                {
+                    Parent = _skillsGrid,
+                    Text = "→",
+                    Font = new Font("Segoe UI", 14, FontStyle.Bold),
+                    ForeColor = Color.FromArgb(120, 120, 140),
+                    Location = new Point(iconSize + 10, y + 12),
+                    AutoSize = true,
+                };
+
+                // Perk slots
+                int perkX = iconSize + 35;
+                var perksForSkill = _takenPerks
+                    .Select(pid => _allSkills.FirstOrDefault(s => s.Id == pid))
+                    .Where(p => p != null && p.BasicSkillId.Equals(skillId, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                int totalSlots = mastery + 1;
+                for (int slot = 0; slot < totalSlots; slot++)
+                {
+                    var perkBox = new PictureBox
+                    {
+                        Parent = _skillsGrid,
+                        Location = new Point(perkX, y),
+                        Size = new Size(iconSize, iconSize),
+                        SizeMode = PictureBoxSizeMode.Zoom,
+                        BackColor = Color.FromArgb(40, 40, 55),
+                        BorderStyle = BorderStyle.FixedSingle,
+                    };
+
+                    if (slot < perksForSkill.Count && perksForSkill[slot] != null)
+                    {
+                        var perk = perksForSkill[slot]!;
+                        var pImg = perk.GetIcon();
+                        if (pImg != null) perkBox.Image = new Bitmap(pImg);
+                        perkBox.Cursor = Cursors.Hand;
+
+                        var pTip = new ToolTip();
+                        pTip.SetToolTip(perkBox, perk.GetName());
+                        perkBox.DoubleClick += (s, ev) => ShowPerkDetail(perk);
+                    }
+                    else
+                    {
+                        new Label
+                        {
+                            Parent = _skillsGrid,
+                            Text = "?",
+                            Font = new Font("Segoe UI", 18, FontStyle.Bold),
+                            ForeColor = Color.FromArgb(80, 80, 100),
+                            Location = new Point(perkX + 14, y + 10),
+                            AutoSize = true,
+                        };
+                        perkBox.SendToBack();
+                    }
+
+                    perkX += iconSize + gap;
+                }
+
+                // Extra center perk for racial at expert
+                if (isRacial && mastery >= 2)
+                {
+                    var centerPerks = perksForSkill.Where(p => p != null && p.IsSpecialPerk).ToList();
+                    foreach (var cp in centerPerks.Skip(totalSlots))
+                    {
+                        var cpBox = new PictureBox
+                        {
+                            Parent = _skillsGrid,
+                            Location = new Point(perkX, y),
+                            Size = new Size(iconSize, iconSize),
+                            SizeMode = PictureBoxSizeMode.Zoom,
+                            BackColor = Color.FromArgb(55, 45, 45),
+                            BorderStyle = BorderStyle.FixedSingle,
+                            Cursor = Cursors.Hand,
+                        };
+                        var cpImg = cp!.GetIcon();
+                        if (cpImg != null) cpBox.Image = new Bitmap(cpImg);
+                        var cpTip = new ToolTip();
+                        cpTip.SetToolTip(cpBox, $"[Центр] {cp.GetName()}");
+                        cpBox.DoubleClick += (s, ev) => ShowPerkDetail(cp);
+                        perkX += iconSize + gap;
+                    }
+                }
+
+                y += iconSize + gap;
+            }
+
+            // Racial skill first
+            if (!string.IsNullOrEmpty(_racialSkillId))
+                AddSkillRow(_racialSkillId, _racialMastery, true);
+
+            // Regular skills
+            foreach (var (sid, m) in _takenSkills)
+                AddSkillRow(sid, m, false);
+
+            // Empty skill slots
+            int emptySlots = MaxNonRacialSkills - _takenSkills.Count;
+            for (int i = 0; i < emptySlots; i++)
+            {
+                var emptyBox = new PictureBox
+                {
+                    Parent = _skillsGrid,
+                    Location = new Point(5, y),
+                    Size = new Size(iconSize, iconSize),
+                    SizeMode = PictureBoxSizeMode.Zoom,
+                    BackColor = Color.FromArgb(35, 35, 48),
+                    BorderStyle = BorderStyle.FixedSingle,
+                };
+
+                new Label
+                {
+                    Parent = _skillsGrid,
+                    Text = "?",
+                    Font = new Font("Segoe UI", 18, FontStyle.Bold),
+                    ForeColor = Color.FromArgb(60, 60, 80),
+                    Location = new Point(19, y + 10),
+                    AutoSize = true,
+                };
+                emptyBox.SendToBack();
+
+                y += iconSize + gap;
+            }
+        }
+
+        private void ShowSkillDetail(SkillInfo skill, int mastery)
+        {
+            using var form = new SkillDetailForm(skill, mastery);
+            form.ShowDialog();
+        }
+
+        private void ShowPerkDetail(SkillInfo perk)
+        {
+            using var form = new SkillDetailForm(perk, 0);
+            form.ShowDialog();
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════════
+    //  ОКНО ВЫБОРА ПРИ ПОВЫШЕНИИ УРОВНЯ
+    // ═════════════════════════════════════════════════════════════════════════════
+    internal enum LevelUpType { NewSkill, AdvanceSkill, Perk }
+
+    internal class LevelUpOption
+    {
+        public LevelUpType Type { get; set; }
+        public string SkillId { get; set; } = "";
+        public string PerkId { get; set; } = "";
+        public int NewMastery { get; set; }
+    }
+
+    internal class LevelUpForm : Form
+    {
+        public LevelUpOption? SelectedOption { get; private set; }
+
+        public LevelUpForm(List<LevelUpOption> options, List<SkillInfo> allSkills)
+        {
+            Text = "Повышение уровня";
+            Size = new Size(580, 350);
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            BackColor = Color.FromArgb(30, 30, 40);
+
+            new Label
+            {
+                Parent = this,
+                Text = "Выберите 1 из доступных:",
+                Font = new Font("Segoe UI", 13, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                Location = new Point(15, 10),
+                AutoSize = true,
+            };
+
+            string[] sectionLabels = { "Навык (лево-верх)", "Навык (лево-низ)", "Перк (право-верх)", "Перк (право-низ)" };
+
+            int y = 45;
+            for (int i = 0; i < options.Count; i++)
+            {
+                var opt = options[i];
+                string title = i < sectionLabels.Length ? sectionLabels[i] : "Вариант";
+                string desc = "";
+                Image? icon = null;
+
+                switch (opt.Type)
+                {
+                    case LevelUpType.NewSkill:
+                    {
+                        var skill = allSkills.FirstOrDefault(s => s.Id == opt.SkillId);
+                        desc = $"Новый навык: {skill?.GetName() ?? opt.SkillId}";
+                        icon = skill?.GetIcon(0);
+                        break;
+                    }
+                    case LevelUpType.AdvanceSkill:
+                    {
+                        var skill = allSkills.FirstOrDefault(s => s.Id == opt.SkillId);
+                        string mName = LevelingTab.MasteryName(opt.NewMastery);
+                        desc = $"Продвинуть: {skill?.GetName(opt.NewMastery) ?? opt.SkillId} → {mName}";
+                        icon = skill?.GetIcon(opt.NewMastery);
+                        break;
+                    }
+                    case LevelUpType.Perk:
+                    {
+                        var perk = allSkills.FirstOrDefault(s => s.Id == opt.PerkId);
+                        desc = $"Перк: {perk?.GetName() ?? opt.PerkId}";
+                        icon = perk?.GetIcon();
+                        break;
+                    }
+                }
+
+                var panel = new Panel
+                {
+                    Parent = this,
+                    Location = new Point(15, y),
+                    Size = new Size(535, 60),
+                    BackColor = Color.FromArgb(45, 45, 60),
+                    BorderStyle = BorderStyle.FixedSingle,
+                    Cursor = Cursors.Hand,
+                };
+
+                var iconBox = new PictureBox
+                {
+                    Parent = panel,
+                    Location = new Point(3, 3),
+                    Size = new Size(52, 52),
+                    SizeMode = PictureBoxSizeMode.Zoom,
+                    BackColor = Color.FromArgb(35, 35, 50),
+                    Cursor = Cursors.Hand,
+                };
+                if (icon != null) iconBox.Image = new Bitmap(icon);
+
+                new Label
+                {
+                    Parent = panel,
+                    Text = title,
+                    Font = new Font("Segoe UI", 8),
+                    ForeColor = Color.Gray,
+                    Location = new Point(62, 3),
+                    AutoSize = true,
+                    Cursor = Cursors.Hand,
+                };
+
+                new Label
+                {
+                    Parent = panel,
+                    Text = desc,
+                    Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                    ForeColor = Color.White,
+                    Location = new Point(62, 22),
+                    AutoSize = true,
+                    Cursor = Cursors.Hand,
+                };
+
+                int capturedIdx = i;
+                void SelectThis(object? s, EventArgs ev)
+                {
+                    SelectedOption = options[capturedIdx];
+                    DialogResult = DialogResult.OK;
+                    Close();
+                }
+
+                panel.Click += SelectThis;
+                iconBox.Click += SelectThis;
+                foreach (Control c in panel.Controls) c.Click += SelectThis;
+
+                y += 65;
+            }
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════════
+    //  КАРТОЧКА НАВЫКА / ПЕРКА
+    // ═════════════════════════════════════════════════════════════════════════════
+    internal class SkillDetailForm : Form
+    {
+        public SkillDetailForm(SkillInfo skill, int mastery)
+        {
+            Text = skill.GetName(mastery);
+            Size = new Size(420, 320);
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            BackColor = Color.FromArgb(30, 30, 40);
+
+            var icon = new PictureBox
+            {
+                Parent = this,
+                Location = new Point(15, 15),
+                Size = new Size(80, 80),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                BackColor = Color.FromArgb(45, 45, 60),
+            };
+            var img = skill.GetIcon(mastery);
+            if (img != null) icon.Image = new Bitmap(img);
+
+            new Label
+            {
+                Parent = this,
+                Text = skill.GetName(mastery),
+                Font = new Font("Segoe UI", 14, FontStyle.Bold),
+                ForeColor = Color.White,
+                Location = new Point(105, 15),
+                AutoSize = true,
+            };
+
+            if (skill.IsSkill)
+            {
+                new Label
+                {
+                    Parent = this,
+                    Text = LevelingTab.MasteryName(mastery),
+                    Font = new Font("Segoe UI", 10, FontStyle.Italic),
+                    ForeColor = Color.FromArgb(255, 220, 100),
+                    Location = new Point(105, 45),
+                    AutoSize = true,
+                };
+            }
+
+            new Panel { Parent = this, Location = new Point(15, 105), Size = new Size(375, 1), BackColor = Color.FromArgb(80, 80, 100) };
+
+            new Label
+            {
+                Parent = this,
+                Text = skill.GetDescription(mastery),
+                Font = new Font("Segoe UI", 9),
+                ForeColor = Color.LightGray,
+                Location = new Point(15, 115),
+                AutoSize = true,
+                MaximumSize = new Size(375, 0),
+            };
         }
     }
 }
