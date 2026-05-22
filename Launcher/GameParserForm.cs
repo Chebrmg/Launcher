@@ -548,6 +548,19 @@ namespace Launcher
             };
             btnPlayer2.FlatAppearance.BorderSize = 0;
 
+            var btnReady = new Button
+            {
+                Parent = playerPanel,
+                Text = "Готов!",
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                Size = new Size(160, 34),
+                Location = new Point(playerPanel.Width - 170, 3),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(50, 160, 50),
+                ForeColor = Color.White,
+            };
+            btnReady.FlatAppearance.BorderSize = 0;
+
             _tabs.Location = new Point(10, 55);
             _tabs.Size = new Size(Width - 36, Height - 105);
             _tabs.Visible = true;
@@ -569,14 +582,14 @@ namespace Launcher
             var hci1 = _heroClasses.FirstOrDefault(c => c.Id == hero1.HeroClass);
             var hci2 = _heroClasses.FirstOrDefault(c => c.Id == hero2.HeroClass);
 
-            new ArmyPurchaseTab(tabArmy1, creatures1, goldState1);
-            new ArtifactTab(tabArt1, artifacts, goldState1);
-            new LevelingTab(tabLvl1, hero1, _allSkills, hci1, goldState1);
-            new SpellTab(tabSpells1, _allSpells, _faction1, hero1.HeroClass, goldState1);
-            new ArmyPurchaseTab(tabArmy2, creatures2, goldState2);
-            new ArtifactTab(tabArt2, artifacts, goldState2);
-            new LevelingTab(tabLvl2, hero2, _allSkills, hci2, goldState2);
-            new SpellTab(tabSpells2, _allSpells, _faction2, hero2.HeroClass, goldState2);
+            var armyTab1 = new ArmyPurchaseTab(tabArmy1, creatures1, goldState1);
+            var artTab1  = new ArtifactTab(tabArt1, artifacts, goldState1);
+            var lvlTab1  = new LevelingTab(tabLvl1, hero1, _allSkills, hci1, goldState1);
+            var spellTab1 = new SpellTab(tabSpells1, _allSpells, _faction1, hero1.HeroClass, goldState1);
+            var armyTab2 = new ArmyPurchaseTab(tabArmy2, creatures2, goldState2);
+            var artTab2  = new ArtifactTab(tabArt2, artifacts, goldState2);
+            var lvlTab2  = new LevelingTab(tabLvl2, hero2, _allSkills, hci2, goldState2);
+            var spellTab2 = new SpellTab(tabSpells2, _allSpells, _faction2, hero2.HeroClass, goldState2);
 
             _tabs.TabPages.Add(tabArmy1);
             _tabs.TabPages.Add(tabArt1);
@@ -602,6 +615,49 @@ namespace Launcher
                 _tabs.TabPages.AddRange(new[] { tabArmy2, tabArt2, tabLvl2, tabSpells2 });
                 if (idx >= 0 && idx < _tabs.TabCount) _tabs.SelectedIndex = idx;
             };
+
+            btnReady.Click += (s, ev) =>
+            {
+                var preset1 = BuildPreset(hero1, armyTab1, artTab1, lvlTab1, spellTab1, goldState1);
+                var preset2 = BuildPreset(hero2, armyTab2, artTab2, lvlTab2, spellTab2, goldState2);
+
+                string userModsDir = System.IO.Path.Combine(_gameRoot, "UserMods");
+                try
+                {
+                    string path = PresetGenerator.Generate(userModsDir, preset1, preset2,
+                        _allSpells, _faction1, _faction2);
+                    MessageBox.Show($"Пресет сохранён:\n{path}", "Готов!",
+                        MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Ошибка создания пресета:\n{ex.Message}", "Ошибка",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            };
+        }
+
+        private static PlayerPreset BuildPreset(HeroInfo hero,
+            ArmyPurchaseTab armyTab, ArtifactTab artTab,
+            LevelingTab lvlTab, SpellTab spellTab, GoldState gold)
+        {
+            return new PlayerPreset
+            {
+                Hero = hero,
+                ArmySlots = armyTab.Slots,
+                EquippedArtifacts = artTab.Equipped.ToDictionary(kv => kv.Key, kv => kv.Value),
+                HeroLevel = lvlTab.HeroLevel,
+                TotalOffence = lvlTab.TotalOffence,
+                TotalDefence = lvlTab.TotalDefence,
+                TotalSpellpower = lvlTab.TotalSpellpower,
+                TotalKnowledge = lvlTab.TotalKnowledge,
+                Skills = lvlTab.TakenSkills.ToList(),
+                Perks = lvlTab.TakenPerks.ToList(),
+                RacialMastery = lvlTab.RacialMastery,
+                Spells = spellTab.ChosenSpells.ToList(),
+                Runes = spellTab.ChosenRunes.ToList(),
+                GoldSpent = gold.Spent,
+            };
         }
     }
 
@@ -615,6 +671,8 @@ namespace Launcher
         private readonly List<CreatureInfo> _creatures;
         private readonly Dictionary<int, TierPool> _pools = new();
         private readonly ArmySlot[] _slots = new ArmySlot[7];
+
+        public ArmySlot[] Slots => _slots;
 
         // ── кеши элементов магазина ──────────────────────────────────────────────
         // ключ = CreatureInfo.Id
@@ -1295,6 +1353,8 @@ namespace Launcher
         private readonly Random _rng = new();
         private const int RerollCost = 5000;
 
+        public IReadOnlyDictionary<string, ArtifactInfo?> Equipped => _equipped;
+
         private static readonly Dictionary<string, string> SlotRuNames = new()
         {
             { "PRIMARY",   "Меч"      }, { "SECONDARY", "Щит"      },
@@ -1864,6 +1924,15 @@ namespace Launcher
         private readonly List<string> _takenPerks = new();
         private string _racialSkillId = "";
         private int _racialMastery;
+
+        public int HeroLevel => _heroLevel;
+        public int TotalOffence => _hero.Offence + _bonusOffence;
+        public int TotalDefence => _hero.Defence + _bonusDefence;
+        public int TotalSpellpower => _hero.Spellpower + _bonusSpellpower;
+        public int TotalKnowledge => _hero.Knowledge + _bonusKnowledge;
+        public IReadOnlyList<(string SkillId, int Mastery)> TakenSkills => _takenSkills;
+        public IReadOnlyList<string> TakenPerks => _takenPerks;
+        public int RacialMastery => _racialMastery;
 
         private Label _levelLabel = null!;
         private Label _statsLabel = null!;
@@ -2702,6 +2771,9 @@ namespace Launcher
         private readonly Random _rng = new();
         private const int SwapCost = 5000;
         private const int RerollCost = 5000;
+
+        public IReadOnlyList<SpellInfo> ChosenSpells => _chosenSpells;
+        public IReadOnlyList<SpellInfo> ChosenRunes => _chosenRunes;
 
         private static readonly Dictionary<string, string[]> ProfiledSchools = new()
         {

@@ -210,6 +210,7 @@ namespace Launcher
         public string MagicSchool { get; set; } = "";
         public int ManaCost { get; set; }
         public SpellResourceCost? ResourceCost { get; set; }
+        public string SourcePath { get; set; } = "";
 
         public bool IsRunic => MagicSchool == "MAGIC_SCHOOL_RUNIC";
         public bool IsWarcry => MagicSchool == "MAGIC_SCHOOL_WARCRIES";
@@ -1304,6 +1305,7 @@ namespace Launcher
                 var spell = new SpellInfo
                 {
                     Id = id,
+                    SourcePath = pair.path,
                     Level = ParseInt(root, "Level"),
                     MagicSchool = root.Element("MagicSchool")?.Value ?? "",
                     ManaCost = ParseInt(root, "TrainedCost"),
