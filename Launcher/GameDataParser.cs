@@ -89,6 +89,93 @@ namespace Launcher
         public string SlotDisplayRu => SlotDisplayMap.TryGetValue(SlotDisplay, out var r) ? r : SlotDisplay;
     }
 
+    public class SkillPrerequisite
+    {
+        public string HeroClass { get; set; } = "";
+        public List<string> DependencyIds { get; set; } = new();
+    }
+
+    public class SkillInfo
+    {
+        public string Id { get; set; } = "";
+        public string SkillType { get; set; } = "";
+        public string HeroClass { get; set; } = "";
+        public string BasicSkillId { get; set; } = "";
+        public List<string> Names { get; set; } = new();
+        public List<string> Descriptions { get; set; } = new();
+        public List<Image?> Icons { get; set; } = new();
+        public List<SkillPrerequisite> Prerequisites { get; set; } = new();
+
+        public bool IsSkill => SkillType == "SKILLTYPE_SKILL";
+        public bool IsPerk => !IsSkill;
+        public bool IsStandardPerk => SkillType == "SKILLTYPE_STANDART_PERK";
+        public bool IsClassPerk => SkillType == "SKILLTYPE_CLASS_PERK";
+        public bool IsSpecialPerk => SkillType == "SKILLTYPE_SPECIAL_PERK";
+        public bool IsUniquePerk => SkillType == "SKILLTYPE_UINQUE_PERK";
+        public bool IsRacial => HeroClass != "HERO_CLASS_NONE" && HeroClass != "";
+
+        public bool IsPrimaryPerk => IsPerk && Prerequisites.Count == 0;
+        public bool IsSecondaryPerk => IsPerk && Prerequisites.Count > 0;
+
+        public int MasteryLevels => IsSkill ? Names.Count : 0;
+
+        public string GetName(int mastery = 0)
+        {
+            if (IsSkill && mastery >= 0 && mastery < Names.Count) return Names[mastery];
+            if (Names.Count > 0) return Names[0];
+            return Id;
+        }
+
+        public string GetDescription(int mastery = 0)
+        {
+            if (IsSkill && mastery >= 0 && mastery < Descriptions.Count) return Descriptions[mastery];
+            if (Descriptions.Count > 0) return Descriptions[0];
+            return "";
+        }
+
+        public Image? GetIcon(int mastery = 0)
+        {
+            if (IsSkill)
+            {
+                int idx = mastery + 1;
+                return idx >= 0 && idx < Icons.Count ? Icons[idx] : null;
+            }
+            return Icons.Count > 1 ? Icons[1] : (Icons.Count > 0 ? Icons[0] : null);
+        }
+    }
+
+    public class HeroClassInfo
+    {
+        public string Id { get; set; } = "";
+        public Dictionary<string, int> SkillProbs { get; set; } = new();
+        public int OffenceProb { get; set; }
+        public int DefenceProb { get; set; }
+        public int SpellpowerProb { get; set; }
+        public int KnowledgeProb { get; set; }
+    }
+
+    public class HeroInfo
+    {
+        public string InternalName { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string HeroClass { get; set; } = "";
+        public string TownType { get; set; } = "";
+        public string PrimarySkillId { get; set; } = "";
+        public string PrimarySkillMastery { get; set; } = "";
+        public string SpecializationName { get; set; } = "";
+        public string SpecializationDesc { get; set; } = "";
+        public Image? FaceIcon { get; set; }
+        public int Offence { get; set; }
+        public int Defence { get; set; }
+        public int Spellpower { get; set; }
+        public int Knowledge { get; set; }
+        public List<(string SkillId, string Mastery)> Skills { get; set; } = new();
+        public List<string> PerkIds { get; set; } = new();
+        public List<string> SpellIds { get; set; } = new();
+
+        public string Faction => GameDataParser.TownToFactionPublic(TownType);
+    }
+
     internal readonly struct VfsEntry
     {
         public string ArchivePath { get; init; }
@@ -159,6 +246,21 @@ namespace Launcher
             { "Северные Кланы",new[] { "/Dwarf/"     } },
             { "Великая Орда",  new[] { "/Orcs/"      } },
         };
+
+        public static readonly Dictionary<string, string> FactionToHeroClass = new(StringComparer.Ordinal)
+        {
+            { "Орден Света",    "HERO_CLASS_KNIGHT"      },
+            { "Инферно",        "HERO_CLASS_DEMON_LORD"   },
+            { "Некрополис",     "HERO_CLASS_NECROMANCER"  },
+            { "Лесной Союз",    "HERO_CLASS_RANGER"       },
+            { "Академия",       "HERO_CLASS_WIZARD"       },
+            { "Лига Теней",     "HERO_CLASS_WARLOCK"      },
+            { "Северные Кланы", "HERO_CLASS_RUNEMAGE"     },
+            { "Великая Орда",   "HERO_CLASS_BARBARIAN"    },
+        };
+
+        public static string TownToFactionPublic(string town) =>
+            TownToFaction.TryGetValue(town, out var f) ? f : "Нейтралы";
 
         public int VfsCount { get; private set; }
         public string DiagInfo { get; private set; } = "";
@@ -770,6 +872,304 @@ namespace Launcher
             if (parent == null) return 0;
             string? val = parent.Element(elementName)?.Value;
             return val != null && int.TryParse(val, out int r) ? r : 0;
+        }
+
+        public List<SkillInfo> ParseSkills()
+        {
+            var skillsXdb = ReadXdb("/GameMechanics/RefTables/Skills.xdb");
+            if (skillsXdb == null) return new();
+
+            var items = skillsXdb.Root?.Element("objects")?.Elements("Item") ?? skillsXdb.Descendants("Item");
+            var validItems = new ConcurrentBag<(XElement item, XElement data)>();
+
+            foreach (var item in items)
+            {
+                string id = item.Element("ID")?.Value ?? "";
+                if (string.IsNullOrEmpty(id) || id == "HERO_SKILL_NONE") continue;
+                var data = item.Element("obj") ?? item;
+                validItems.Add((item, data));
+            }
+
+            var textPaths = new ConcurrentBag<string>();
+            var iconXdbPaths = new ConcurrentBag<string>();
+
+            Parallel.ForEach(validItems, pair =>
+            {
+                var data = pair.data;
+
+                foreach (var nameItem in data.Element("NameFileRef")?.Elements("Item") ?? Enumerable.Empty<XElement>())
+                {
+                    string href = nameItem.Attribute("href")?.Value ?? "";
+                    if (!string.IsNullOrEmpty(href)) textPaths.Add(ExtractPath(href));
+                }
+
+                foreach (var descItem in data.Element("DescriptionFileRef")?.Elements("Item") ?? Enumerable.Empty<XElement>())
+                {
+                    string href = descItem.Attribute("href")?.Value ?? "";
+                    if (!string.IsNullOrEmpty(href)) textPaths.Add(ExtractPath(href));
+                }
+
+                foreach (var texItem in data.Element("Texture")?.Elements("Item") ?? Enumerable.Empty<XElement>())
+                {
+                    string href = texItem.Attribute("href")?.Value ?? "";
+                    if (!string.IsNullOrEmpty(href)) iconXdbPaths.Add(ExtractPath(href));
+                }
+            });
+
+            PreloadFiles(textPaths.Distinct(StringComparer.OrdinalIgnoreCase));
+            PreloadFiles(iconXdbPaths.Distinct(StringComparer.OrdinalIgnoreCase));
+
+            var ddsPaths = new ConcurrentBag<string>();
+            Parallel.ForEach(iconXdbPaths.Distinct(StringComparer.OrdinalIgnoreCase), ixp =>
+            {
+                var texXdb = ReadXdb(ixp);
+                string destName = texXdb?.Root?.Element("DestName")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(destName))
+                    ddsPaths.Add(ResolvePath(ixp, destName));
+            });
+            PreloadFiles(ddsPaths.Distinct(StringComparer.OrdinalIgnoreCase));
+
+            var result = new ConcurrentBag<SkillInfo>();
+
+            Parallel.ForEach(validItems, pair =>
+            {
+                string id = pair.item.Element("ID")!.Value;
+                var data = pair.data;
+
+                var skill = new SkillInfo
+                {
+                    Id = id,
+                    SkillType = data.Element("SkillType")?.Value ?? "",
+                    HeroClass = data.Element("HeroClass")?.Value ?? "",
+                    BasicSkillId = data.Element("BasicSkillID")?.Value ?? "",
+                };
+
+                foreach (var nameItem in data.Element("NameFileRef")?.Elements("Item") ?? Enumerable.Empty<XElement>())
+                {
+                    string href = nameItem.Attribute("href")?.Value ?? "";
+                    if (!string.IsNullOrEmpty(href))
+                    {
+                        var nd = ReadFile(ExtractPath(href));
+                        skill.Names.Add(nd != null ? StripTags(DetectAndDecode(nd)) : id);
+                    }
+                }
+
+                foreach (var descItem in data.Element("DescriptionFileRef")?.Elements("Item") ?? Enumerable.Empty<XElement>())
+                {
+                    string href = descItem.Attribute("href")?.Value ?? "";
+                    if (!string.IsNullOrEmpty(href))
+                    {
+                        var dd = ReadFile(ExtractPath(href));
+                        skill.Descriptions.Add(dd != null ? StripTags(DetectAndDecode(dd)) : "");
+                    }
+                }
+
+                foreach (var texItem in data.Element("Texture")?.Elements("Item") ?? Enumerable.Empty<XElement>())
+                {
+                    string href = texItem.Attribute("href")?.Value ?? "";
+                    if (string.IsNullOrEmpty(href))
+                    {
+                        skill.Icons.Add(null);
+                    }
+                    else
+                    {
+                        skill.Icons.Add(LoadDdsIcon(ExtractPath(href)));
+                    }
+                }
+
+                var prereqs = data.Element("SkillPrerequisites")?.Elements("Item");
+                if (prereqs != null)
+                {
+                    foreach (var prereqItem in prereqs)
+                    {
+                        var prereq = new SkillPrerequisite
+                        {
+                            HeroClass = prereqItem.Element("Class")?.Value ?? "",
+                        };
+                        foreach (var depItem in prereqItem.Element("dependenciesIDs")?.Elements("Item") ?? Enumerable.Empty<XElement>())
+                        {
+                            string val = depItem.Value.Trim();
+                            if (!string.IsNullOrEmpty(val)) prereq.DependencyIds.Add(val);
+                        }
+                        skill.Prerequisites.Add(prereq);
+                    }
+                }
+
+                if (skill.Names.Count == 0) skill.Names.Add(id);
+
+                result.Add(skill);
+            });
+
+            return result.ToList();
+        }
+
+        public List<HeroClassInfo> ParseHeroClasses()
+        {
+            var classXdb = ReadXdb("/GameMechanics/RefTables/HeroClass.xdb");
+            if (classXdb == null) return new();
+
+            var items = classXdb.Root?.Element("objects")?.Elements("Item") ?? classXdb.Descendants("Item");
+            var result = new List<HeroClassInfo>();
+
+            foreach (var item in items)
+            {
+                string id = item.Element("ID")?.Value ?? "";
+                if (string.IsNullOrEmpty(id) || id == "HERO_CLASS_NONE") continue;
+
+                var data = item.Element("obj") ?? item;
+                var hci = new HeroClassInfo { Id = id };
+
+                foreach (var sp in data.Element("SkillsProbs")?.Elements("Item") ?? Enumerable.Empty<XElement>())
+                {
+                    string skillId = sp.Element("SkillID")?.Value ?? "";
+                    int prob = ParseInt(sp, "Prob");
+                    if (!string.IsNullOrEmpty(skillId)) hci.SkillProbs[skillId] = prob;
+                }
+
+                var ap = data.Element("AttributeProbs");
+                if (ap != null)
+                {
+                    hci.OffenceProb = ParseInt(ap, "OffenceProb");
+                    hci.DefenceProb = ParseInt(ap, "DefenceProb");
+                    hci.SpellpowerProb = ParseInt(ap, "SpellpowerProb");
+                    hci.KnowledgeProb = ParseInt(ap, "KnowledgeProb");
+                }
+
+                result.Add(hci);
+            }
+
+            return result;
+        }
+
+        public List<HeroInfo> ParseHeroes()
+        {
+            var anyXdb = ReadXdb("/MapObjects/_(AdvMapSharedGroup)/Heroes/Any.xdb");
+            if (anyXdb == null) return new();
+
+            var links = anyXdb.Root?.Element("links")?.Elements("Item") ?? anyXdb.Descendants("Item");
+            var heroPaths = new ConcurrentBag<string>();
+            foreach (var link in links)
+            {
+                string href = link.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(href)) heroPaths.Add(ExtractPath(href));
+            }
+
+            PreloadFiles(heroPaths.Distinct(StringComparer.OrdinalIgnoreCase));
+
+            var validHeroes = new ConcurrentBag<(string path, XDocument doc)>();
+            Parallel.ForEach(heroPaths.Distinct(StringComparer.OrdinalIgnoreCase), hp =>
+            {
+                var doc = ReadXdb(hp);
+                if (doc?.Root == null) return;
+                string scenario = doc.Root.Element("ScenarioHero")?.Value ?? "false";
+                if (scenario == "true") return;
+                validHeroes.Add((hp, doc));
+            });
+
+            var textPaths = new ConcurrentBag<string>();
+            var iconXdbPaths = new ConcurrentBag<string>();
+
+            foreach (var (path, doc) in validHeroes)
+            {
+                var root = doc.Root!;
+                var editable = root.Element("Editable");
+
+                string nameHref = editable?.Element("NameFileRef")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(nameHref)) textPaths.Add(ResolvePath(path, ExtractPath(nameHref)));
+
+                string specNameHref = root.Element("SpecializationNameFileRef")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(specNameHref)) textPaths.Add(ResolvePath(path, ExtractPath(specNameHref)));
+
+                string specDescHref = root.Element("SpecializationDescFileRef")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(specDescHref)) textPaths.Add(ResolvePath(path, ExtractPath(specDescHref)));
+
+                string faceHref = root.Element("FaceTexture")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(faceHref)) iconXdbPaths.Add(ResolvePath(path, ExtractPath(faceHref)));
+            }
+
+            PreloadFiles(textPaths.Distinct(StringComparer.OrdinalIgnoreCase));
+            PreloadFiles(iconXdbPaths.Distinct(StringComparer.OrdinalIgnoreCase));
+
+            var ddsPaths = new ConcurrentBag<string>();
+            Parallel.ForEach(iconXdbPaths.Distinct(StringComparer.OrdinalIgnoreCase), ixp =>
+            {
+                var texXdb = ReadXdb(ixp);
+                string destName = texXdb?.Root?.Element("DestName")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(destName))
+                    ddsPaths.Add(ResolvePath(ixp, destName));
+            });
+            PreloadFiles(ddsPaths.Distinct(StringComparer.OrdinalIgnoreCase));
+
+            var result = new ConcurrentBag<HeroInfo>();
+
+            Parallel.ForEach(validHeroes, hero =>
+            {
+                var (heroPath, doc) = hero;
+                var root = doc.Root!;
+                var editable = root.Element("Editable");
+
+                var info = new HeroInfo
+                {
+                    InternalName = root.Element("InternalName")?.Value ?? "",
+                    HeroClass = root.Element("Class")?.Value ?? "",
+                    TownType = root.Element("TownType")?.Value ?? "",
+                    PrimarySkillId = root.Element("PrimarySkill")?.Element("SkillID")?.Value ?? "",
+                    PrimarySkillMastery = root.Element("PrimarySkill")?.Element("Mastery")?.Value ?? "",
+                    Offence = ParseInt(editable, "Offence"),
+                    Defence = ParseInt(editable, "Defence"),
+                    Spellpower = ParseInt(editable, "Spellpower"),
+                    Knowledge = ParseInt(editable, "Knowledge"),
+                };
+
+                string nameHref = editable?.Element("NameFileRef")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(nameHref))
+                {
+                    var nd = ReadFile(ResolvePath(heroPath, ExtractPath(nameHref)));
+                    if (nd != null) info.Name = StripTags(DetectAndDecode(nd));
+                }
+                if (string.IsNullOrEmpty(info.Name)) info.Name = info.InternalName;
+
+                string specNameHref = root.Element("SpecializationNameFileRef")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(specNameHref))
+                {
+                    var nd = ReadFile(ResolvePath(heroPath, ExtractPath(specNameHref)));
+                    if (nd != null) info.SpecializationName = StripTags(DetectAndDecode(nd));
+                }
+
+                string specDescHref = root.Element("SpecializationDescFileRef")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(specDescHref))
+                {
+                    var nd = ReadFile(ResolvePath(heroPath, ExtractPath(specDescHref)));
+                    if (nd != null) info.SpecializationDesc = StripTags(DetectAndDecode(nd));
+                }
+
+                string faceHref = root.Element("FaceTexture")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(faceHref))
+                    info.FaceIcon = LoadDdsIcon(ResolvePath(heroPath, ExtractPath(faceHref)));
+
+                foreach (var skillItem in editable?.Element("skills")?.Elements("Item") ?? Enumerable.Empty<XElement>())
+                {
+                    string sid = skillItem.Element("SkillID")?.Value ?? "";
+                    string mastery = skillItem.Element("Mastery")?.Value ?? "";
+                    if (!string.IsNullOrEmpty(sid)) info.Skills.Add((sid, mastery));
+                }
+
+                foreach (var perkItem in editable?.Element("perkIDs")?.Elements("Item") ?? Enumerable.Empty<XElement>())
+                {
+                    string val = perkItem.Value.Trim();
+                    if (!string.IsNullOrEmpty(val)) info.PerkIds.Add(val);
+                }
+
+                foreach (var spellItem in editable?.Element("spellIDs")?.Elements("Item") ?? Enumerable.Empty<XElement>())
+                {
+                    string val = spellItem.Value.Trim();
+                    if (!string.IsNullOrEmpty(val)) info.SpellIds.Add(val);
+                }
+
+                result.Add(info);
+            });
+
+            return result.ToList();
         }
 
         public void Dispose()
