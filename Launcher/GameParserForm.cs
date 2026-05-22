@@ -2158,12 +2158,12 @@ namespace Launcher
                 }
             }
 
-            // Get available perks
+            // Get available perks, classified relative to this hero's class
             var takenPerkSet = new HashSet<string>(_takenPerks, StringComparer.OrdinalIgnoreCase);
             var availPerks = GetAvailablePerks(heroClass, allTakenSkillIds, takenPerkSet);
 
-            var primaryPerks = availPerks.Where(p => p.IsPrimaryPerk).ToList();
-            var secondaryPerks = availPerks.Where(p => p.IsSecondaryPerk).ToList();
+            var primaryPerks = availPerks.Where(p => !HasPrereqsForClass(p, heroClass)).ToList();
+            var secondaryPerks = availPerks.Where(p => HasPrereqsForClass(p, heroClass)).ToList();
 
             // RIGHT-UPPER: primary perk, or secondary if no primaries
             if (primaryPerks.Count > 0)
@@ -2213,10 +2213,9 @@ namespace Launcher
                 if (perk.IsRacial && perk.HeroClass != heroClass) continue;
 
                 // Check prerequisites for this class
-                if (perk.IsSecondaryPerk)
+                if (perk.Prerequisites.Count > 0)
                 {
                     var classPrereqs = perk.Prerequisites.Where(p => p.HeroClass == heroClass).ToList();
-                    if (classPrereqs.Count == 0 && perk.Prerequisites.Count > 0) continue;
                     if (classPrereqs.Count > 0)
                     {
                         bool met = classPrereqs.Any(cp => cp.DependencyIds.All(d => takenPerkIds.Contains(d)));
@@ -2267,6 +2266,9 @@ namespace Launcher
 
             return usedSlots < maxSlots;
         }
+
+        private static bool HasPrereqsForClass(SkillInfo perk, string heroClass) =>
+            perk.Prerequisites.Any(p => p.HeroClass == heroClass);
 
         private SkillInfo? PickByProb(List<SkillInfo> skills)
         {
