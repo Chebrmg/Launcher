@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -6,14 +7,14 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using System.Xml.Linq;
 using Pfim;
 
 namespace Launcher
 {
-    /// <summary>
-    /// Данные одного юнита, распарсенные из игровых архивов.
-    /// </summary>
     public class CreatureInfo
     {
         public string Id { get; set; } = "";
@@ -37,15 +38,9 @@ namespace Launcher
         public List<string> Abilities { get; set; } = new();
         public Image? Icon { get; set; }
 
-        /// <summary>
-        /// Базовый юнит (не грейд): BaseCreature == CREATURE_UNKNOWN и есть Upgrades.
-        /// </summary>
         public bool IsBase => BaseCreature == "CREATURE_UNKNOWN";
     }
 
-    /// <summary>
-    /// Данные артефакта, распарсенные из Artifacts.xdb.
-    /// </summary>
     public class ArtifactInfo
     {
         public string Id { get; set; } = "";
@@ -64,486 +59,423 @@ namespace Launcher
             _ => Type,
         };
 
-        private static readonly Dictionary<string, string> SlotDisplayMap = new()
+        private static readonly Dictionary<string, string> SlotDisplayMap = new(StringComparer.Ordinal)
         {
-            { "PRIMARY", "Меч" },
-            { "SECONDARY", "Щит" },
-            { "HEAD", "Корона" },
-            { "CHEST", "Кираса" },
-            { "NECK", "Ожерелье" },
-            { "SHOULDERS", "Плащ" },
-            { "FINGER", "Кольцо" },
-            { "FEET", "Сапоги" },
-            { "MISCSLOT1", "Карман" },
+            { "PRIMARY",   "Меч"      },
+            { "SECONDARY", "Щит"      },
+            { "HEAD",      "Корона"   },
+            { "CHEST",     "Кираса"   },
+            { "NECK",      "Ожерелье" },
+            { "SHOULDERS", "Плащ"     },
+            { "FINGER",    "Кольцо"   },
+            { "FEET",      "Сапоги"   },
+            { "MISCSLOT1", "Карман"   },
         };
 
-        public string SlotDisplayRu
+        private static readonly Dictionary<string, string> SlotMap = new(StringComparer.Ordinal)
         {
-            get
-            {
-                string eng = SlotDisplay;
-                if (SlotDisplayMap.TryGetValue(eng, out var ru)) return ru;
-                return eng;
-            }
-        }
-
-        private static readonly Dictionary<string, string> SlotMap = new()
-        {
-            { "ARTF_SLOT_SWORD", "PRIMARY" },
+            { "ARTF_SLOT_SWORD",  "PRIMARY"   },
             { "ARTF_SLOT_SHIELD", "SECONDARY" },
-            { "ARTF_SLOT_HELM", "HEAD" },
-            { "ARTF_SLOT_ARMOR", "CHEST" },
-            { "ARTF_SLOT_NECK", "NECK" },
-            { "ARTF_SLOT_RING", "FINGER" },
-            { "ARTF_SLOT_FEET", "FEET" },
-            { "ARTF_SLOT_CAPE", "SHOULDERS" },
-            { "ARTF_SLOT_MISC", "MISCSLOT1" },
+            { "ARTF_SLOT_HELM",   "HEAD"      },
+            { "ARTF_SLOT_ARMOR",  "CHEST"     },
+            { "ARTF_SLOT_NECK",   "NECK"      },
+            { "ARTF_SLOT_RING",   "FINGER"    },
+            { "ARTF_SLOT_FEET",   "FEET"      },
+            { "ARTF_SLOT_CAPE",   "SHOULDERS" },
+            { "ARTF_SLOT_MISC",   "MISCSLOT1" },
         };
 
         public string SlotDisplay => SlotMap.TryGetValue(Slot, out var s) ? s : Slot;
+        public string SlotDisplayRu => SlotDisplayMap.TryGetValue(SlotDisplay, out var r) ? r : SlotDisplay;
     }
 
-    /// <summary>
-    /// Запись виртуальной файловой системы — файл из конкретного архива с датой.
-    /// </summary>
-    internal class VfsEntry
+    internal readonly struct VfsEntry
     {
-        public string ArchivePath { get; set; } = "";
-        public string EntryName { get; set; } = "";
-        public DateTimeOffset LastModified { get; set; }
+        public string ArchivePath { get; init; }
+        public string EntryName { get; init; }
+        public DateTimeOffset LastModified { get; init; }
     }
 
-    /// <summary>
-    /// Парсер игровых данных из .pak и .h5u архивов.
-    /// Читает XDB файлы, извлекает характеристики юнитов и иконки (DDS).
-    /// </summary>
-    public class GameDataParser
+    public class GameDataParser : IDisposable
     {
         private readonly string _gameRoot;
-        private Dictionary<string, VfsEntry> _vfs = new();
-        private Dictionary<string, byte[]> _fileCache = new();
-        private Dictionary<string, string> _abilityNames = new();
+        private readonly Dictionary<string, VfsEntry> _vfs = new(8192, StringComparer.OrdinalIgnoreCase);
 
-        // Маппинг CreatureTown → человекочитаемое название фракции
-        private static readonly Dictionary<string, string> TownToFaction = new()
+        // Пул открытых архивов, чтобы не тратить время на постоянный I/O при открытии файлов
+        private readonly ConcurrentDictionary<string, ZipArchive> _openedArchives = new(StringComparer.OrdinalIgnoreCase);
+
+        private readonly ConcurrentDictionary<string, byte[]> _fileCache = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, Image?> _iconCache = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<string, string> _abilityNames = new(StringComparer.Ordinal);
+
+        private static readonly Regex TagRegex = new("<[^>]+>", RegexOptions.Compiled);
+
+        static GameDataParser()
         {
-            { "TOWN_HEAVEN", "Орден Света" },
-            { "TOWN_INFERNO", "Инферно" },
-            { "TOWN_NECROMANCY", "Некрополис" },
-            { "TOWN_PRESERVE", "Лесной Союз" },
-            { "TOWN_ACADEMY", "Академия" },
-            { "TOWN_DUNGEON", "Лига Теней" },
-            { "TOWN_FORTRESS", "Северные Кланы" },
-            { "TOWN_STRONGHOLD", "Великая Орда" },
-            { "TOWN_NO_TYPE", "Нейтралы" },
-            { "TOWN_NONE", "Нейтралы" },
+            Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+        }
+
+        private static readonly Dictionary<string, string> TownToFaction = new(StringComparer.Ordinal)
+        {
+            { "TOWN_HEAVEN",     "Орден Света"    },
+            { "TOWN_INFERNO",    "Инферно"         },
+            { "TOWN_NECROMANCY", "Некрополис"      },
+            { "TOWN_PRESERVE",   "Лесной Союз"     },
+            { "TOWN_ACADEMY",    "Академия"        },
+            { "TOWN_DUNGEON",    "Лига Теней"      },
+            { "TOWN_FORTRESS",   "Северные Кланы"  },
+            { "TOWN_STRONGHOLD", "Великая Орда"    },
+            { "TOWN_NO_TYPE",    "Нейтралы"        },
+            { "TOWN_NONE",       "Нейтралы"        },
         };
 
-        // Маппинг папки в Creatures.xdb → фракция (для определения фракции по пути)
-        private static readonly Dictionary<string, string> PathToFaction = new()
+        private static readonly Dictionary<string, string> PathToFaction = new(StringComparer.OrdinalIgnoreCase)
         {
-            { "Haven", "Орден Света" },
-            { "Inferno", "Инферно" },
-            { "Necropolis", "Некрополис" },
-            { "Preserve", "Лесной Союз" },
-            { "Academy", "Академия" },
-            { "Dungeon", "Лига Теней" },
-            { "Dwarf", "Северные Кланы" },
-            { "Orcs", "Великая Орда" },
-            { "Neutrals", "Нейтралы" },
+            { "Haven",     "Орден Света"   },
+            { "Inferno",   "Инферно"        },
+            { "Necropolis","Некрополис"     },
+            { "Preserve",  "Лесной Союз"   },
+            { "Academy",   "Академия"      },
+            { "Dungeon",   "Лига Теней"    },
+            { "Dwarf",     "Северные Кланы"},
+            { "Orcs",      "Великая Орда"  },
+            { "Neutrals",  "Нейтралы"      },
         };
 
-        public static readonly string[] FactionOrder =
-        {
-            "Орден Света", "Инферно", "Некрополис", "Лесной Союз",
-            "Академия", "Лига Теней", "Северные Кланы", "Великая Орда", "Нейтралы"
-        };
-
-        // Фракции для выбора (без нейтралов)
         public static readonly string[] SelectableFactions =
         {
             "Орден Света", "Инферно", "Некрополис", "Лесной Союз",
             "Академия", "Лига Теней", "Северные Кланы", "Великая Орда"
         };
 
-        // Фракция → сегменты пути для фильтрации в Creatures.xdb
-        public static readonly Dictionary<string, string[]> FactionPathSegments = new()
+        public static readonly Dictionary<string, string[]> FactionPathSegments = new(StringComparer.Ordinal)
         {
-            { "Орден Света", new[] { "/Haven/" } },
-            { "Инферно", new[] { "/Inferno/" } },
-            { "Некрополис", new[] { "/Necropolis/" } },
-            { "Лесной Союз", new[] { "/Preserve/" } },
-            { "Академия", new[] { "/Academy/" } },
-            { "Лига Теней", new[] { "/Dungeon/" } },
-            { "Северные Кланы", new[] { "/Dwarf/" } },
-            { "Великая Орда", new[] { "/Orcs/" } },
+            { "Орден Света",   new[] { "/Haven/"     } },
+            { "Инферно",       new[] { "/Inferno/"   } },
+            { "Некрополис",    new[] { "/Necropolis/"} },
+            { "Лесной Союз",   new[] { "/Preserve/"  } },
+            { "Академия",      new[] { "/Academy/"   } },
+            { "Лига Теней",    new[] { "/Dungeon/"   } },
+            { "Северные Кланы",new[] { "/Dwarf/"     } },
+            { "Великая Орда",  new[] { "/Orcs/"      } },
         };
 
-        public int VfsCount => _vfs.Count;
+        public int VfsCount { get; private set; }
         public string DiagInfo { get; private set; } = "";
 
-        public GameDataParser(string gameRoot)
-        {
-            _gameRoot = gameRoot;
-        }
+        public GameDataParser(string gameRoot) => _gameRoot = gameRoot;
 
-        /// <summary>
-        /// Строит виртуальную ФС из всех архивов: data/*.pak + UserMods/*.h5u.
-        /// Для каждого внутреннего пути хранит архив с самой новой датой.
-        /// </summary>
         public void BuildVfs()
         {
             _vfs.Clear();
+            _fileCache.Clear();
+            _iconCache.Clear();
+
+            foreach (var zip in _openedArchives.Values) zip.Dispose();
+            _openedArchives.Clear();
 
             var archives = new List<string>();
-
             string dataDir = Path.Combine(_gameRoot, "data");
-            if (Directory.Exists(dataDir))
-                archives.AddRange(Directory.GetFiles(dataDir, "*.pak"));
+            string userModDir = Path.Combine(_gameRoot, "UserMods");
 
-            string userModsDir = Path.Combine(_gameRoot, "UserMods");
-            if (Directory.Exists(userModsDir))
-                archives.AddRange(Directory.GetFiles(userModsDir, "*.h5u"));
+            if (Directory.Exists(dataDir)) archives.AddRange(Directory.GetFiles(dataDir, "*.pak"));
+            if (Directory.Exists(userModDir)) archives.AddRange(Directory.GetFiles(userModDir, "*.h5u"));
 
-            var diagLines = new List<string>();
-            diagLines.Add($"Путь: {_gameRoot}");
-            diagLines.Add($"data/: {(Directory.Exists(Path.Combine(_gameRoot, "data")) ? "есть" : "НЕТ")}");
-            diagLines.Add($"Архивов найдено: {archives.Count}");
-
-            foreach (string archivePath in archives)
+            var diagLines = new ConcurrentBag<string>
             {
+                $"Путь: {_gameRoot}",
+                $"data/: {(Directory.Exists(dataDir) ? "есть" : "НЕТ")}",
+                $"Архивов найдено: {archives.Count}"
+            };
+
+            var localVfsMaps = new Dictionary<string, VfsEntry>[archives.Count];
+
+            Parallel.For(0, archives.Count, i =>
+            {
+                string archivePath = archives[i];
                 string archiveName = Path.GetFileName(archivePath);
+                var local = new Dictionary<string, VfsEntry>(2048, StringComparer.OrdinalIgnoreCase);
                 try
                 {
-                    using var zip = ZipFile.OpenRead(archivePath);
-                    int entryCount = 0;
+                    // Открываем архив один раз и сохраняем его в пул
+                    var zip = ZipFile.OpenRead(archivePath);
+                    _openedArchives.TryAdd(archivePath, zip);
+
+                    int count = 0;
                     foreach (var entry in zip.Entries)
                     {
-                        if (string.IsNullOrEmpty(entry.Name))
+                        if (string.IsNullOrEmpty(entry.Name) || entry.FullName.EndsWith('/'))
                             continue;
 
-                        entryCount++;
-                        // Нормализуем путь: обратные слэши → прямые, всегда с / в начале
-                        string normalizedPath = "/" + entry.FullName.Replace('\\', '/').TrimStart('/');
+                        count++;
+                        string norm = NormalizePath(entry.FullName);
 
-                        if (!_vfs.ContainsKey(normalizedPath) ||
-                            entry.LastWriteTime > _vfs[normalizedPath].LastModified)
+                        if (!local.TryGetValue(norm, out var existing) || entry.LastWriteTime > existing.LastModified)
                         {
-                            _vfs[normalizedPath] = new VfsEntry
+                            local[norm] = new VfsEntry
                             {
                                 ArchivePath = archivePath,
                                 EntryName = entry.FullName,
-                                LastModified = entry.LastWriteTime
+                                LastModified = entry.LastWriteTime,
                             };
                         }
                     }
-                    diagLines.Add($"{archiveName}: {entryCount} файлов");
+                    diagLines.Add($"{archiveName}: {count} файлов");
                 }
                 catch (Exception ex)
                 {
                     diagLines.Add($"{archiveName}: ОШИБКА — {ex.Message}");
                 }
+                localVfsMaps[i] = local;
+            });
+
+            foreach (var local in localVfsMaps)
+            {
+                if (local == null) continue;
+                foreach (var kv in local)
+                {
+                    if (!_vfs.TryGetValue(kv.Key, out var existing) || kv.Value.LastModified > existing.LastModified)
+                        _vfs[kv.Key] = kv.Value;
+                }
             }
 
+            VfsCount = _vfs.Count;
             bool hasCreatures = _vfs.ContainsKey("/GameMechanics/RefTables/Creatures.xdb");
             diagLines.Add($"Creatures.xdb: {(hasCreatures ? "найден" : "НЕ НАЙДЕН")}");
+            diagLines.Add($"Всего записей VFS: {VfsCount}");
 
-            DiagInfo = string.Join("\n", diagLines);
+            DiagInfo = string.Join("\n", diagLines.OrderBy(x => x));
         }
 
-        /// <summary>
-        /// Предзагружает нужные файлы из архивов в кэш за один проход.
-        /// </summary>
         private void PreloadFiles(IEnumerable<string> paths)
         {
-            // Группируем запрашиваемые пути по архивам
-            var byArchive = new Dictionary<string, List<(string normalized, string entryName)>>();
+            var byArchive = new Dictionary<string, List<KeyValuePair<string, string>>>(StringComparer.OrdinalIgnoreCase);
+
             foreach (string path in paths)
             {
-                string normalized = "/" + path.Replace('\\', '/').TrimStart('/');
-                if (_fileCache.ContainsKey(normalized))
-                    continue;
-                if (!_vfs.TryGetValue(normalized, out var vfsEntry))
+                string norm = NormalizePath(path);
+                if (_fileCache.ContainsKey(norm) || !_vfs.TryGetValue(norm, out var vfsEntry))
                     continue;
 
-                if (!byArchive.ContainsKey(vfsEntry.ArchivePath))
-                    byArchive[vfsEntry.ArchivePath] = new();
-                byArchive[vfsEntry.ArchivePath].Add((normalized, vfsEntry.EntryName));
+                if (!byArchive.TryGetValue(vfsEntry.ArchivePath, out var list))
+                    byArchive[vfsEntry.ArchivePath] = list = new List<KeyValuePair<string, string>>();
+
+                list.Add(new KeyValuePair<string, string>(vfsEntry.EntryName, norm));
             }
 
-            // Читаем каждый архив один раз
-            foreach (var kv in byArchive)
+            Parallel.ForEach(byArchive, kv =>
             {
-                try
+                string archivePath = kv.Key;
+                var needed = kv.Value;
+
+                if (!_openedArchives.TryGetValue(archivePath, out var zip))
+                    return;
+
+                lock (zip) // Защищаем обращение к структурам zip-файла из параллельных потоков
                 {
-                    var needed = new HashSet<string>(kv.Value.Select(x => x.entryName));
-                    using var zip = ZipFile.OpenRead(kv.Key);
-                    foreach (var entry in zip.Entries)
+                    foreach (var pair in needed)
                     {
-                        if (needed.Contains(entry.FullName))
-                        {
-                            string norm = kv.Value.First(x => x.entryName == entry.FullName).normalized;
-                            using var stream = entry.Open();
-                            using var ms = new MemoryStream();
-                            stream.CopyTo(ms);
-                            _fileCache[norm] = ms.ToArray();
-                        }
+                        var entry = zip.GetEntry(pair.Key);
+                        if (entry == null) continue;
+
+                        using var stream = entry.Open();
+                        using var ms = new MemoryStream((int)entry.Length);
+                        stream.CopyTo(ms);
+                        _fileCache.TryAdd(pair.Value, ms.ToArray());
                     }
                 }
-                catch { }
-            }
+            });
         }
 
-        /// <summary>
-        /// Читает файл из кэша или из архива.
-        /// </summary>
         private byte[]? ReadFile(string virtualPath)
         {
-            string normalized = "/" + virtualPath.Replace('\\', '/').TrimStart('/');
+            string norm = NormalizePath(virtualPath);
 
-            if (_fileCache.TryGetValue(normalized, out var cached))
+            if (_fileCache.TryGetValue(norm, out var cached))
                 return cached;
 
-            if (!_vfs.TryGetValue(normalized, out var vfsEntry))
+            if (!_vfs.TryGetValue(norm, out var vfsEntry))
                 return null;
 
             try
             {
-                using var zip = ZipFile.OpenRead(vfsEntry.ArchivePath);
-                var entry = zip.GetEntry(vfsEntry.EntryName);
-                if (entry == null)
+                if (!_openedArchives.TryGetValue(vfsEntry.ArchivePath, out var zip))
                     return null;
 
-                using var stream = entry.Open();
-                using var ms = new MemoryStream();
-                stream.CopyTo(ms);
-                var data = ms.ToArray();
-                _fileCache[normalized] = data;
-                return data;
+                lock (zip)
+                {
+                    var entry = zip.GetEntry(vfsEntry.EntryName);
+                    if (entry == null) return null;
+
+                    using var stream = entry.Open();
+                    using var ms = new MemoryStream((int)entry.Length);
+                    stream.CopyTo(ms);
+                    var data = ms.ToArray();
+                    _fileCache.TryAdd(norm, data);
+                    return data;
+                }
             }
-            catch
-            {
-                return null;
-            }
+            catch { return null; }
         }
 
-        /// <summary>
-        /// Читает XDB (XML) файл из виртуальной ФС.
-        /// </summary>
         private XDocument? ReadXdb(string virtualPath)
         {
             var data = ReadFile(virtualPath);
-            if (data == null)
-                return null;
-
+            if (data == null) return null;
             try
             {
                 using var ms = new MemoryStream(data);
                 return XDocument.Load(ms);
             }
-            catch
-            {
-                return null;
-            }
+            catch { return null; }
         }
 
-        /// <summary>
-        /// Извлекает путь из href атрибута, убирая #xpointer(...).
-        /// Пример: "/GameMechanics/Creature/Creatures/Haven/Peasant.xdb#xpointer(/Creature)" → "/GameMechanics/Creature/Creatures/Haven/Peasant.xdb"
-        /// </summary>
+        private static string NormalizePath(string path) =>
+            path.StartsWith('/') ? path.Replace('\\', '/') : "/" + path.Replace('\\', '/');
+
         private static string ExtractPath(string href)
         {
             int idx = href.IndexOf('#');
-            return idx >= 0 ? href.Substring(0, idx) : href;
+            return idx >= 0 ? href[..idx] : href;
         }
 
-        /// <summary>
-        /// Резолвит относительный путь относительно директории текущего файла.
-        /// </summary>
         private static string ResolvePath(string basePath, string relativePath)
         {
-            if (relativePath.StartsWith("/"))
+            if (relativePath.StartsWith('/'))
                 return relativePath;
 
-            string baseDir = basePath.Substring(0, basePath.LastIndexOf('/') + 1);
-            return baseDir + relativePath;
+            string baseDir = basePath[..(basePath.LastIndexOf('/') + 1)];
+            string combined = baseDir + relativePath;
+
+            var parts = combined.Split('/');
+            var stack = new Stack<string>(parts.Length);
+            foreach (string part in parts)
+            {
+                if (part == "..")
+                {
+                    if (stack.Count > 0) stack.Pop();
+                }
+                else if (part != "." && part != "")
+                {
+                    stack.Push(part);
+                }
+            }
+            return "/" + string.Join("/", stack.Reverse());
         }
 
-        /// <summary>
-        /// Парсит CombatAbilities.xdb и загружает имена способностей из .txt файлов.
-        /// </summary>
         private void BuildAbilityNames()
         {
             _abilityNames.Clear();
 
             var abilitiesXdb = ReadXdb("/GameMechanics/RefTables/CombatAbilities.xdb");
-            if (abilitiesXdb == null)
-                return;
+            if (abilitiesXdb == null) return;
 
-            // Собираем пути к .txt файлам имён
-            var namePaths = new Dictionary<string, string>(); // ID → path
-            foreach (var item in abilitiesXdb.Descendants("Item"))
+            var items = abilitiesXdb.Root?.Element("objects")?.Elements("Item") ?? abilitiesXdb.Descendants("Item");
+            var namePaths = new ConcurrentDictionary<string, string>(StringComparer.Ordinal);
+
+            Parallel.ForEach(items, item =>
             {
                 string id = item.Element("ID")?.Value ?? "";
-                if (string.IsNullOrEmpty(id) || id == "ABILITY_NONE")
-                    continue;
+                if (string.IsNullOrEmpty(id) || id == "ABILITY_NONE") return;
 
                 string nameHref = item.Element("obj")?.Element("NameFileRef")?.Attribute("href")?.Value ?? "";
-                if (string.IsNullOrEmpty(nameHref))
-                    continue;
+                if (!string.IsNullOrEmpty(nameHref))
+                    namePaths[id] = ExtractPath(nameHref);
+            });
 
-                namePaths[id] = ExtractPath(nameHref);
-            }
-
-            // Предзагружаем все .txt файлы одним проходом
             PreloadFiles(namePaths.Values);
 
-            // Читаем имена
-            foreach (var kv in namePaths)
+            Parallel.ForEach(namePaths, kv =>
             {
                 var data = ReadFile(kv.Value);
-                if (data != null)
-                    _abilityNames[kv.Key] = DetectAndDecode(data);
-                else
-                    _abilityNames[kv.Key] = kv.Key; // fallback на ID
-            }
+                _abilityNames[kv.Key] = data != null ? DetectAndDecode(data) : kv.Key;
+            });
         }
 
-        /// <summary>
-        /// Определяет фракцию по пути к файлу юнита в Creatures.xdb.
-        /// </summary>
-        private static string DetectFactionFromPath(string path)
-        {
-            foreach (var kv in PathToFaction)
-            {
-                if (path.Contains("/" + kv.Key + "/"))
-                    return kv.Value;
-            }
-            return "Нейтралы";
-        }
-
-        /// <summary>
-        /// Проверяет, принадлежит ли путь к юниту указанным фракциям.
-        /// </summary>
-        private static bool MatchesFactions(string href, List<string> factions)
-        {
-            foreach (string faction in factions)
-            {
-                if (FactionPathSegments.TryGetValue(faction, out var segments))
-                {
-                    foreach (string seg in segments)
-                    {
-                        if (href.Contains(seg))
-                            return true;
-                    }
-                }
-            }
-            return false;
-        }
-
-        /// <summary>
-        /// Парсит юнитов из игровых архивов.
-        /// factions — список фракций для фильтрации (null = все).
-        /// </summary>
         public List<CreatureInfo> ParseCreatures(List<string>? factions = null)
         {
-            var result = new List<CreatureInfo>();
-
             var creaturesXdb = ReadXdb("/GameMechanics/RefTables/Creatures.xdb");
-            if (creaturesXdb == null)
-                return result;
+            if (creaturesXdb == null) return new();
 
-            var items = creaturesXdb.Descendants("Item").ToList();
-
-            // Загружаем словарь имён способностей
             if (_abilityNames.Count == 0)
                 BuildAbilityNames();
 
-            // Собираем пути файлов Creature.xdb (с фильтром по фракциям)
-            var creaturePaths = new List<string>();
-            foreach (var item in items)
+            var items = creaturesXdb.Root?.Element("objects")?.Elements("Item") ?? creaturesXdb.Descendants("Item");
+            var creatureMeta = new ConcurrentBag<(string id, string creaturePath)>();
+            var allCreaturePaths = new ConcurrentBag<string>();
+
+            Parallel.ForEach(items, item =>
             {
                 string id = item.Element("ID")?.Value ?? "";
-                if (id == "CREATURE_UNKNOWN") continue;
+                if (id == "CREATURE_UNKNOWN") return;
+
                 string href = item.Element("Obj")?.Attribute("href")?.Value ?? "";
-                if (string.IsNullOrEmpty(href)) continue;
+                if (string.IsNullOrEmpty(href)) return;
 
-                // Фильтр по фракциям через путь
-                if (factions != null && !MatchesFactions(href, factions))
-                    continue;
+                if (factions != null && !MatchesFactions(href, factions)) return;
 
-                creaturePaths.Add(ExtractPath(href));
-            }
+                string cp = ExtractPath(href);
+                creatureMeta.Add((id, cp));
+                allCreaturePaths.Add(cp);
+            });
 
-            // Предзагружаем Creature.xdb файлы одним проходом
-            PreloadFiles(creaturePaths);
+            PreloadFiles(allCreaturePaths);
 
-            // Собираем Visual пути из загруженных Creature.xdb для второй предзагрузки
-            var visualPaths = new List<string>();
-            foreach (string cp in creaturePaths)
+            var visualPaths = new ConcurrentBag<string>();
+            Parallel.ForEach(creatureMeta, meta =>
             {
-                var cXdb = ReadXdb(cp);
+                var cXdb = ReadXdb(meta.creaturePath);
                 string vHref = cXdb?.Root?.Element("Visual")?.Attribute("href")?.Value ?? "";
                 if (!string.IsNullOrEmpty(vHref))
                     visualPaths.Add(ExtractPath(vHref));
-            }
-            PreloadFiles(visualPaths);
+            });
 
-            // Собираем пути к именам и иконкам из Visual.xdb
-            var extraPaths = new List<string>();
-            foreach (string vp in visualPaths)
+            PreloadFiles(visualPaths.Distinct(StringComparer.OrdinalIgnoreCase));
+
+            var namePaths = new ConcurrentBag<string>();
+            var iconXdbPaths = new ConcurrentBag<string>();
+
+            Parallel.ForEach(visualPaths.Distinct(StringComparer.OrdinalIgnoreCase), vp =>
             {
                 var vXdb = ReadXdb(vp);
-                if (vXdb?.Root == null) continue;
+                if (vXdb?.Root == null) return;
 
                 string nameHref = vXdb.Root.Element("CreatureNameFileRef")?.Attribute("href")?.Value ?? "";
                 if (!string.IsNullOrEmpty(nameHref))
-                    extraPaths.Add(ResolvePath(vp, ExtractPath(nameHref)));
+                    namePaths.Add(ResolvePath(vp, ExtractPath(nameHref)));
 
-                string iconHref = vXdb.Root.Element("Icon64")?.Attribute("href")?.Value ?? "";
-                if (string.IsNullOrEmpty(iconHref))
-                    iconHref = vXdb.Root.Element("Icon128")?.Attribute("href")?.Value ?? "";
+                string iconHref = vXdb.Root.Element("Icon64")?.Attribute("href")?.Value
+                               ?? vXdb.Root.Element("Icon128")?.Attribute("href")?.Value
+                               ?? "";
                 if (!string.IsNullOrEmpty(iconHref))
-                {
-                    string iconXdbPath = ResolvePath(vp, ExtractPath(iconHref));
-                    extraPaths.Add(iconXdbPath);
-                    // Попробуем прочитать Texture.xdb чтобы узнать путь к DDS
-                    var texXdb = ReadXdb(iconXdbPath);
-                    string destName = texXdb?.Root?.Element("DestName")?.Attribute("href")?.Value ?? "";
-                    if (!string.IsNullOrEmpty(destName))
-                        extraPaths.Add(ResolvePath(iconXdbPath, destName));
-                }
-            }
-            PreloadFiles(extraPaths);
+                    iconXdbPaths.Add(ResolvePath(vp, ExtractPath(iconHref)));
+            });
 
-            foreach (var item in items)
+            PreloadFiles(namePaths.Distinct(StringComparer.OrdinalIgnoreCase));
+            PreloadFiles(iconXdbPaths.Distinct(StringComparer.OrdinalIgnoreCase));
+
+            var ddsPaths = new ConcurrentBag<string>();
+            Parallel.ForEach(iconXdbPaths.Distinct(StringComparer.OrdinalIgnoreCase), ixp =>
             {
-                string id = item.Element("ID")?.Value ?? "";
-                if (id == "CREATURE_UNKNOWN")
-                    continue;
+                var texXdb = ReadXdb(ixp);
+                string destName = texXdb?.Root?.Element("DestName")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(destName))
+                    ddsPaths.Add(ResolvePath(ixp, destName));
+            });
+            PreloadFiles(ddsPaths.Distinct(StringComparer.OrdinalIgnoreCase));
 
-                string objHref = item.Element("Obj")?.Attribute("href")?.Value ?? "";
-                if (string.IsNullOrEmpty(objHref))
-                    continue;
+            var result = new ConcurrentBag<CreatureInfo>();
 
-                if (factions != null && !MatchesFactions(objHref, factions))
-                    continue;
+            Parallel.ForEach(creatureMeta, meta =>
+            {
+                var cXdb = ReadXdb(meta.creaturePath);
+                if (cXdb?.Root == null) return;
 
-                string creaturePath = ExtractPath(objHref);
-                string factionFromPath = DetectFactionFromPath(creaturePath);
-
-                var creatureXdb = ReadXdb(creaturePath);
-                if (creatureXdb == null)
-                    continue;
-
-                var root = creatureXdb.Root;
-                if (root == null)
-                    continue;
-
+                var root = cXdb.Root;
                 var creature = new CreatureInfo
                 {
-                    Id = id,
-                    Faction = factionFromPath,
+                    Id = meta.id,
+                    Faction = DetectFactionFromPath(meta.creaturePath),
                     AttackSkill = ParseInt(root, "AttackSkill"),
                     DefenceSkill = ParseInt(root, "DefenceSkill"),
                     Shots = ParseInt(root, "Shots"),
@@ -560,329 +492,293 @@ namespace Launcher
                     BaseCreature = root.Element("BaseCreature")?.Value ?? "CREATURE_UNKNOWN",
                 };
 
-                // Фракция из CreatureTown (приоритетнее чем из пути)
-                if (TownToFaction.TryGetValue(creature.CreatureTown, out string? factionName))
-                    creature.Faction = factionName;
+                if (TownToFaction.TryGetValue(creature.CreatureTown, out string? fn))
+                    creature.Faction = fn;
 
-                // Upgrades
-                var upgradesEl = root.Element("Upgrades");
-                if (upgradesEl != null)
+                var upgradesNode = root.Element("Upgrades");
+                if (upgradesNode != null)
                 {
-                    foreach (var upItem in upgradesEl.Elements("Item"))
+                    foreach (var upItem in upgradesNode.Elements("Item"))
                     {
                         string val = upItem.Value.Trim();
-                        if (!string.IsNullOrEmpty(val))
-                            creature.Upgrades.Add(val);
+                        if (val.Length > 0) creature.Upgrades.Add(val);
                     }
                 }
 
-                // Abilities (с подтягиванием имён из CombatAbilities.xdb)
-                var abilitiesEl = root.Element("Abilities");
-                if (abilitiesEl != null)
+                var abilitiesNode = root.Element("Abilities");
+                if (abilitiesNode != null)
                 {
-                    foreach (var abItem in abilitiesEl.Elements("Item"))
+                    foreach (var abItem in abilitiesNode.Elements("Item"))
                     {
                         string val = abItem.Value.Trim();
-                        if (!string.IsNullOrEmpty(val))
-                        {
-                            string displayName = _abilityNames.TryGetValue(val, out string? name)
-                                ? name : val;
-                            creature.Abilities.Add(displayName);
-                        }
+                        if (val.Length == 0) continue;
+                        creature.Abilities.Add(_abilityNames.TryGetValue(val, out string? n) ? n : val);
                     }
                 }
 
-                // Visual → CreatureVisual → имя + иконка
                 string visualHref = root.Element("Visual")?.Attribute("href")?.Value ?? "";
                 if (!string.IsNullOrEmpty(visualHref))
                 {
-                    string visualPath = ExtractPath(visualHref);
-                    var visualXdb = ReadXdb(visualPath);
-                    if (visualXdb?.Root != null)
+                    string vp = ExtractPath(visualHref);
+                    var vXdb = ReadXdb(vp);
+                    if (vXdb?.Root != null)
                     {
-                        // Имя юнита
-                        string nameHref = visualXdb.Root.Element("CreatureNameFileRef")?.Attribute("href")?.Value ?? "";
+                        string nameHref = vXdb.Root.Element("CreatureNameFileRef")?.Attribute("href")?.Value ?? "";
                         if (!string.IsNullOrEmpty(nameHref))
                         {
-                            string namePath = ResolvePath(visualPath, ExtractPath(nameHref));
-                            var nameData = ReadFile(namePath);
-                            if (nameData != null)
-                            {
-                                creature.Name = DetectAndDecode(nameData);
-                            }
+                            string np = ResolvePath(vp, ExtractPath(nameHref));
+                            var nd = ReadFile(np);
+                            if (nd != null) creature.Name = DetectAndDecode(nd);
                         }
 
-                        // Иконка 64x64, fallback на Icon128
-                        string icon64Href = visualXdb.Root.Element("Icon64")?.Attribute("href")?.Value ?? "";
-                        if (string.IsNullOrEmpty(icon64Href))
-                            icon64Href = visualXdb.Root.Element("Icon128")?.Attribute("href")?.Value ?? "";
-                        if (!string.IsNullOrEmpty(icon64Href))
+                        string iconHref = vXdb.Root.Element("Icon64")?.Attribute("href")?.Value
+                                       ?? vXdb.Root.Element("Icon128")?.Attribute("href")?.Value
+                                       ?? "";
+                        if (!string.IsNullOrEmpty(iconHref))
                         {
-                            string iconXdbPath = ResolvePath(visualPath, ExtractPath(icon64Href));
+                            string iconXdbPath = ResolvePath(vp, ExtractPath(iconHref));
                             creature.Icon = LoadDdsIcon(iconXdbPath);
                         }
                     }
                 }
 
                 if (string.IsNullOrEmpty(creature.Name))
-                    creature.Name = id;
+                    creature.Name = meta.id;
 
                 result.Add(creature);
-            }
+            });
 
-            return result;
+            return result.ToList();
         }
 
-        /// <summary>
-        /// Парсит артефакты из Artifacts.xdb.
-        /// Возвращает только артефакты с CanBeGeneratedToSell == true.
-        /// </summary>
         public List<ArtifactInfo> ParseArtifacts()
         {
-            var result = new List<ArtifactInfo>();
-
             var artifactsXdb = ReadXdb("/GameMechanics/RefTables/Artifacts.xdb");
-            if (artifactsXdb == null)
-                return result;
+            if (artifactsXdb == null) return new();
 
-            var items = artifactsXdb.Descendants("Item").ToList();
+            var items = artifactsXdb.Root?.Element("objects")?.Elements("Item") ?? artifactsXdb.Descendants("Item");
+            var validItems = new ConcurrentBag<(XElement item, XElement data)>();
+            var preloadPaths = new ConcurrentBag<string>();
 
-            // Собираем пути для предзагрузки (имена, описания, иконки)
-            var preloadPaths = new List<string>();
-            var validItems = new List<XElement>();
-
-            foreach (var item in items)
+            Parallel.ForEach(items, item =>
             {
                 string id = item.Element("ID")?.Value ?? "";
-                if (string.IsNullOrEmpty(id)) continue;
+                if (string.IsNullOrEmpty(id)) return;
 
-                // Данные могут быть в <obj> или напрямую в <Item>
                 var data = item.Element("obj") ?? item;
+                if (data.Element("CanBeGeneratedToSell")?.Value != "true") return;
 
-                string canSell = data.Element("CanBeGeneratedToSell")?.Value ?? "";
-                if (canSell != "true") continue;
+                validItems.Add((item, data));
 
-                validItems.Add(item);
+                CollectPath(data, "NameFileRef", null, preloadPaths);
+                CollectPath(data, "DescriptionFileRef", null, preloadPaths);
+                CollectPath(data, "Icon", null, preloadPaths);
+            });
 
-                string nameHref = data.Element("NameFileRef")?.Attribute("href")?.Value ?? "";
-                if (!string.IsNullOrEmpty(nameHref))
-                    preloadPaths.Add(ExtractPath(nameHref));
+            PreloadFiles(preloadPaths.Distinct(StringComparer.OrdinalIgnoreCase));
 
-                string descHref = data.Element("DescriptionFileRef")?.Attribute("href")?.Value ?? "";
-                if (!string.IsNullOrEmpty(descHref))
-                    preloadPaths.Add(ExtractPath(descHref));
-
-                string iconHref = data.Element("Icon")?.Attribute("href")?.Value ?? "";
-                if (!string.IsNullOrEmpty(iconHref))
-                {
-                    string iconXdbPath = ExtractPath(iconHref);
-                    preloadPaths.Add(iconXdbPath);
-                }
-            }
-
-            PreloadFiles(preloadPaths);
-
-            // Предзагружаем DDS файлы из Texture.xdb
-            var ddsPaths = new List<string>();
-            foreach (var item in validItems)
+            var ddsPaths = new ConcurrentBag<string>();
+            Parallel.ForEach(validItems, pair =>
             {
-                var data = item.Element("obj") ?? item;
-                string iconHref = data.Element("Icon")?.Attribute("href")?.Value ?? "";
-                if (!string.IsNullOrEmpty(iconHref))
-                {
-                    string iconXdbPath = ExtractPath(iconHref);
-                    var texXdb = ReadXdb(iconXdbPath);
-                    string destName = texXdb?.Root?.Element("DestName")?.Attribute("href")?.Value ?? "";
-                    if (!string.IsNullOrEmpty(destName))
-                        ddsPaths.Add(ResolvePath(iconXdbPath, destName));
-                }
-            }
-            PreloadFiles(ddsPaths);
+                string iconHref = pair.data.Element("Icon")?.Attribute("href")?.Value ?? "";
+                if (string.IsNullOrEmpty(iconHref)) return;
 
-            foreach (var item in validItems)
+                string iconXdbPath = ExtractPath(iconHref);
+                var texXdb = ReadXdb(iconXdbPath);
+                string destName = texXdb?.Root?.Element("DestName")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(destName))
+                    ddsPaths.Add(ResolvePath(iconXdbPath, destName));
+            });
+            PreloadFiles(ddsPaths.Distinct(StringComparer.OrdinalIgnoreCase));
+
+            var result = new ConcurrentBag<ArtifactInfo>();
+
+            Parallel.ForEach(validItems, pair =>
             {
-                string id = item.Element("ID")?.Value ?? "";
-                var data = item.Element("obj") ?? item;
-
-                string type = data.Element("Type")?.Value ?? "";
-                int cost = ParseInt(data, "CostOfGold");
-
-                string slot = data.Element("Slot")?.Value ?? "";
+                string id = pair.item.Element("ID")!.Value;
 
                 var artifact = new ArtifactInfo
                 {
                     Id = id,
-                    Type = type,
-                    Slot = slot,
-                    CostOfGold = cost,
+                    Type = pair.data.Element("Type")?.Value ?? "",
+                    Slot = pair.data.Element("Slot")?.Value ?? "",
+                    CostOfGold = ParseInt(pair.data, "CostOfGold"),
                 };
 
-                // Имя
-                string nameHref = data.Element("NameFileRef")?.Attribute("href")?.Value ?? "";
+                string nameHref = pair.data.Element("NameFileRef")?.Attribute("href")?.Value ?? "";
                 if (!string.IsNullOrEmpty(nameHref))
                 {
-                    var nameData = ReadFile(ExtractPath(nameHref));
-                    if (nameData != null)
-                        artifact.Name = StripTags(DetectAndDecode(nameData));
+                    var nd = ReadFile(ExtractPath(nameHref));
+                    if (nd != null) artifact.Name = StripTags(DetectAndDecode(nd));
                 }
-                if (string.IsNullOrEmpty(artifact.Name))
-                    artifact.Name = id;
+                if (string.IsNullOrEmpty(artifact.Name)) artifact.Name = id;
 
-                // Описание
-                string descHref = data.Element("DescriptionFileRef")?.Attribute("href")?.Value ?? "";
+                string descHref = pair.data.Element("DescriptionFileRef")?.Attribute("href")?.Value ?? "";
                 if (!string.IsNullOrEmpty(descHref))
                 {
-                    var descData = ReadFile(ExtractPath(descHref));
-                    if (descData != null)
-                        artifact.Description = StripTags(DetectAndDecode(descData));
+                    var dd = ReadFile(ExtractPath(descHref));
+                    if (dd != null) artifact.Description = StripTags(DetectAndDecode(dd));
                 }
 
-                // Иконка
-                string iconHref = data.Element("Icon")?.Attribute("href")?.Value ?? "";
+                string iconHref = pair.data.Element("Icon")?.Attribute("href")?.Value ?? "";
                 if (!string.IsNullOrEmpty(iconHref))
-                {
-                    string iconXdbPath = ExtractPath(iconHref);
-                    artifact.Icon = LoadDdsIcon(iconXdbPath);
-                }
+                    artifact.Icon = LoadDdsIcon(ExtractPath(iconHref));
 
                 result.Add(artifact);
-            }
+            });
 
-            return result;
+            return result.ToList();
         }
 
-        /// <summary>
-        /// Загружает DDS иконку через цепочку: Texture.xdb → DestName (DDS файл рядом).
-        /// </summary>
+        private static void CollectPath(XElement data, string elementName, string? basePath, ConcurrentBag<string> target)
+        {
+            string href = data.Element(elementName)?.Attribute("href")?.Value ?? "";
+            if (string.IsNullOrEmpty(href)) return;
+            string path = ExtractPath(href);
+            target.Add(basePath != null ? ResolvePath(basePath, path) : path);
+        }
+
+        private static bool MatchesFactions(string href, List<string> factions)
+        {
+            foreach (string faction in factions)
+                if (FactionPathSegments.TryGetValue(faction, out var segs))
+                    foreach (string seg in segs)
+                        if (href.Contains(seg, StringComparison.OrdinalIgnoreCase))
+                            return true;
+            return false;
+        }
+
+        private static string DetectFactionFromPath(string path)
+        {
+            foreach (var kv in PathToFaction)
+                if (path.Contains(kv.Key, StringComparison.OrdinalIgnoreCase))
+                    return kv.Value;
+            return "Нейтралы";
+        }
+
         private Image? LoadDdsIcon(string textureXdbPath)
         {
+            if (_iconCache.TryGetValue(textureXdbPath, out var cached))
+                return cached;
+
+            Image? icon = null;
             try
             {
-                var textureXdb = ReadXdb(textureXdbPath);
-                if (textureXdb?.Root == null)
-                    return null;
-
-                string destName = textureXdb.Root.Element("DestName")?.Attribute("href")?.Value ?? "";
-                if (string.IsNullOrEmpty(destName))
-                    return null;
-
-                string ddsPath = ResolvePath(textureXdbPath, destName);
-                var ddsData = ReadFile(ddsPath);
-                if (ddsData == null)
-                    return null;
-
-                return DecodeDds(ddsData);
+                var texXdb = ReadXdb(textureXdbPath);
+                string destName = texXdb?.Root?.Element("DestName")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(destName))
+                {
+                    string ddsPath = ResolvePath(textureXdbPath, destName);
+                    var ddsData = ReadFile(ddsPath);
+                    if (ddsData != null) icon = DecodeDds(ddsData);
+                }
             }
-            catch
-            {
-                return null;
-            }
+            catch { }
+
+            _iconCache.TryAdd(textureXdbPath, icon);
+            return icon;
         }
 
-        /// <summary>
-        /// Декодирует DDS байты в Bitmap через Pfim.
-        /// </summary>
         private static Image? DecodeDds(byte[] ddsData)
         {
             try
             {
                 using var ms = new MemoryStream(ddsData);
-                var image = Pfimage.FromStream(ms);
+                using var image = Pfimage.FromStream(ms);
 
-                PixelFormat format;
-                switch (image.Format)
+                PixelFormat format = image.Format switch
                 {
-                    case Pfim.ImageFormat.Rgba32:
-                        format = PixelFormat.Format32bppArgb;
-                        break;
-                    case Pfim.ImageFormat.Rgb24:
-                        format = PixelFormat.Format24bppRgb;
-                        break;
-                    case Pfim.ImageFormat.Rgba16:
-                        format = PixelFormat.Format16bppArgb1555;
-                        break;
-                    case Pfim.ImageFormat.R5g5b5:
-                        format = PixelFormat.Format16bppRgb555;
-                        break;
-                    case Pfim.ImageFormat.R5g5b5a1:
-                        format = PixelFormat.Format16bppArgb1555;
-                        break;
-                    case Pfim.ImageFormat.R5g6b5:
-                        format = PixelFormat.Format16bppRgb565;
-                        break;
-                    default:
-                        format = PixelFormat.Format32bppArgb;
-                        break;
-                }
+                    Pfim.ImageFormat.Rgba32 => PixelFormat.Format32bppArgb,
+                    Pfim.ImageFormat.Rgb24 => PixelFormat.Format24bppRgb,
+                    Pfim.ImageFormat.Rgba16 => PixelFormat.Format16bppArgb1555,
+                    Pfim.ImageFormat.R5g5b5 => PixelFormat.Format16bppRgb555,
+                    Pfim.ImageFormat.R5g5b5a1 => PixelFormat.Format16bppArgb1555,
+                    Pfim.ImageFormat.R5g6b5 => PixelFormat.Format16bppRgb565,
+                    _ => PixelFormat.Format32bppArgb,
+                };
 
                 var handle = GCHandle.Alloc(image.Data, GCHandleType.Pinned);
                 try
                 {
                     var ptr = handle.AddrOfPinnedObject();
-                    var bitmap = new Bitmap(image.Width, image.Height, image.Stride, format, ptr);
-                    // Создаём копию чтобы не зависеть от GCHandle
-                    var copy = new Bitmap(bitmap);
-                    bitmap.Dispose();
+                    using var bitmap = new Bitmap(image.Width, image.Height, image.Stride, format, ptr);
+
+                    var copy = new Bitmap(image.Width, image.Height, PixelFormat.Format32bppArgb);
+                    using (var g = Graphics.FromImage(copy))
+                    {
+                        g.DrawImage(bitmap, 0, 0, image.Width, image.Height);
+                    }
                     return copy;
                 }
-                finally
+                finally { handle.Free(); }
+            }
+            catch { return null; }
+        }
+
+        private static string DetectAndDecode(byte[] data)
+        {
+            if (data.Length >= 2 && data[0] == 0xFF && data[1] == 0xFE)
+                return Encoding.Unicode.GetString(data).Trim().TrimStart('\uFEFF');
+
+            if (data.Length >= 2 && data[0] == 0xFE && data[1] == 0xFF)
+                return Encoding.BigEndianUnicode.GetString(data).Trim().TrimStart('\uFEFF');
+
+            if (data.Length >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF)
+                return Encoding.UTF8.GetString(data).Trim().TrimStart('\uFEFF');
+
+            if (data.Length >= 8)
+            {
+                int nullsOdd = 0, nullsEven = 0;
+                int check = Math.Min(data.Length & ~1, 40);
+                for (int i = 0; i < check; i += 2)
                 {
-                    handle.Free();
+                    if (data[i] == 0) nullsEven++;
+                    if (data[i + 1] == 0) nullsOdd++;
                 }
+                if (nullsOdd >= check / 4)
+                    return Encoding.Unicode.GetString(data).Trim();
+                if (nullsEven >= check / 4)
+                    return Encoding.BigEndianUnicode.GetString(data).Trim();
+            }
+
+            try
+            {
+                var decoder = Encoding.UTF8.GetDecoder();
+                decoder.Fallback = DecoderFallback.ExceptionFallback;
+                int charCount = decoder.GetCharCount(data, 0, data.Length);
+                var chars = new char[charCount];
+                decoder.GetChars(data, 0, data.Length, chars, 0);
+                return new string(chars).Trim();
             }
             catch
             {
-                return null;
+                try
+                {
+                    return Encoding.GetEncoding(1251).GetString(data).Trim();
+                }
+                catch
+                {
+                    return Encoding.UTF8.GetString(data).Trim();
+                }
             }
         }
 
-        /// <summary>
-        /// Определяет кодировку текстового файла по BOM и декодирует.
-        /// </summary>
-        private static string DetectAndDecode(byte[] data)
-        {
-            // UTF-16 LE BOM: FF FE
-            if (data.Length >= 2 && data[0] == 0xFF && data[1] == 0xFE)
-                return System.Text.Encoding.Unicode.GetString(data).Trim().Trim('\uFEFF');
-
-            // UTF-16 BE BOM: FE FF
-            if (data.Length >= 2 && data[0] == 0xFE && data[1] == 0xFF)
-                return System.Text.Encoding.BigEndianUnicode.GetString(data).Trim().Trim('\uFEFF');
-
-            // UTF-8 BOM: EF BB BF
-            if (data.Length >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF)
-                return System.Text.Encoding.UTF8.GetString(data).Trim().Trim('\uFEFF');
-
-            // Нет BOM — проверяем на UTF-16 LE (частые нулевые байты)
-            if (data.Length >= 4)
-            {
-                int nullCount = 0;
-                for (int i = 1; i < Math.Min(data.Length, 20); i += 2)
-                    if (data[i] == 0) nullCount++;
-                if (nullCount > 2)
-                    return System.Text.Encoding.Unicode.GetString(data).Trim();
-            }
-
-            // Fallback: UTF-8
-            return System.Text.Encoding.UTF8.GetString(data).Trim();
-        }
-
-        /// <summary>
-        /// Удаляет HTML/XML-подобные теги из текста.
-        /// </summary>
-        private static string StripTags(string text)
-        {
-            return System.Text.RegularExpressions.Regex.Replace(text, "<[^>]+>", "").Trim();
-        }
+        private static string StripTags(string text) => TagRegex.Replace(text, "").Trim();
 
         private static int ParseInt(XElement? parent, string elementName)
         {
-            if (parent == null)
-                return 0;
+            if (parent == null) return 0;
             string? val = parent.Element(elementName)?.Value;
-            if (val != null && int.TryParse(val, out int result))
-                return result;
-            return 0;
+            return val != null && int.TryParse(val, out int r) ? r : 0;
+        }
+
+        public void Dispose()
+        {
+            foreach (var zip in _openedArchives.Values)
+            {
+                try { zip.Dispose(); } catch { }
+            }
+            _openedArchives.Clear();
         }
     }
 }
