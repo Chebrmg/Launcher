@@ -235,6 +235,7 @@ namespace Launcher
         private List<HeroClassInfo> _heroClasses = new();
         private List<HeroInfo> _allHeroes = new();
         private List<ArtifactInfo> _allArtifacts = new();
+        private List<SpellInfo> _allSpells = new();
         private List<CreatureInfo> _creatures1 = new();
         private List<CreatureInfo> _creatures2 = new();
 
@@ -263,7 +264,8 @@ namespace Launcher
                 var skills = parser.ParseSkills();
                 var heroClasses = parser.ParseHeroClasses();
                 var heroes = parser.ParseHeroes();
-                return (c1, c2, artifacts, skills, heroClasses, heroes, parser.DiagInfo);
+                var spells = parser.ParseSpells();
+                return (c1, c2, artifacts, skills, heroClasses, heroes, spells, parser.DiagInfo);
             }).ContinueWith(task =>
             {
                 if (task.IsFaulted)
@@ -274,7 +276,7 @@ namespace Launcher
                     return;
                 }
 
-                var (c1, c2, artifacts, skills, heroClasses, heroes, diag) = task.Result;
+                var (c1, c2, artifacts, skills, heroClasses, heroes, spells, diag) = task.Result;
                 if (c1.Count == 0 && c2.Count == 0)
                 {
                     _selectionStatus.Text = "Юниты не найдены.\n\nДиагностика:\n" + diag;
@@ -289,6 +291,7 @@ namespace Launcher
                 _allSkills = skills;
                 _heroClasses = heroClasses;
                 _allHeroes = heroes;
+                _allSpells = spells;
 
                 ShowHeroSelection();
             }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
@@ -557,13 +560,11 @@ namespace Launcher
             var tabArt1 = new TabPage("Артефакты") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
             var tabLvl1 = new TabPage("Прокачка") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
             var tabSpells1 = new TabPage("Заклинания") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
-            tabSpells1.Controls.Add(new Label { Text = "В разработке...", ForeColor = Color.Gray, Font = new Font("Segoe UI", 14), AutoSize = true, Location = new Point(20, 20) });
 
             var tabArmy2 = new TabPage("Армия") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
             var tabArt2 = new TabPage("Артефакты") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
             var tabLvl2 = new TabPage("Прокачка") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
             var tabSpells2 = new TabPage("Заклинания") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
-            tabSpells2.Controls.Add(new Label { Text = "В разработке...", ForeColor = Color.Gray, Font = new Font("Segoe UI", 14), AutoSize = true, Location = new Point(20, 20) });
 
             var hci1 = _heroClasses.FirstOrDefault(c => c.Id == hero1.HeroClass);
             var hci2 = _heroClasses.FirstOrDefault(c => c.Id == hero2.HeroClass);
@@ -571,9 +572,11 @@ namespace Launcher
             new ArmyPurchaseTab(tabArmy1, creatures1, goldState1);
             new ArtifactTab(tabArt1, artifacts, goldState1);
             new LevelingTab(tabLvl1, hero1, _allSkills, hci1, goldState1);
+            new SpellTab(tabSpells1, _allSpells, _faction1, hero1.HeroClass, goldState1);
             new ArmyPurchaseTab(tabArmy2, creatures2, goldState2);
             new ArtifactTab(tabArt2, artifacts, goldState2);
             new LevelingTab(tabLvl2, hero2, _allSkills, hci2, goldState2);
+            new SpellTab(tabSpells2, _allSpells, _faction2, hero2.HeroClass, goldState2);
 
             _tabs.TabPages.Add(tabArmy1);
             _tabs.TabPages.Add(tabArt1);
@@ -2680,6 +2683,534 @@ namespace Launcher
                 Font = new Font("Segoe UI", 9),
                 ForeColor = Color.LightGray,
                 Location = new Point(15, 115),
+                AutoSize = true,
+                MaximumSize = new Size(375, 0),
+            };
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════════
+    //  ВКЛАДКА ЗАКЛИНАНИЙ
+    // ═════════════════════════════════════════════════════════════════════════════
+    internal class SpellTab
+    {
+        private readonly TabPage _tab;
+        private readonly GoldState _gold;
+        private readonly List<SpellInfo> _allSpells;
+        private readonly string _faction;
+        private readonly string _heroClass;
+        private readonly Random _rng = new();
+        private const int SwapCost = 5000;
+        private const int RerollCost = 5000;
+
+        private static readonly Dictionary<string, string[]> ProfiledSchools = new()
+        {
+            { "Орден Света",    new[] { "MAGIC_SCHOOL_LIGHT", "MAGIC_SCHOOL_DARK" } },
+            { "Инферно",        new[] { "MAGIC_SCHOOL_DARK", "MAGIC_SCHOOL_DESTRUCTIVE" } },
+            { "Лесной Союз",    new[] { "MAGIC_SCHOOL_LIGHT", "MAGIC_SCHOOL_DESTRUCTIVE" } },
+            { "Некрополис",     new[] { "MAGIC_SCHOOL_DARK", "MAGIC_SCHOOL_SUMMONING" } },
+            { "Академия",       new[] { "MAGIC_SCHOOL_LIGHT", "MAGIC_SCHOOL_SUMMONING" } },
+            { "Лига Теней",     new[] { "MAGIC_SCHOOL_DESTRUCTIVE", "MAGIC_SCHOOL_SUMMONING" } },
+            { "Северные Кланы", new[] { "MAGIC_SCHOOL_LIGHT", "MAGIC_SCHOOL_DESTRUCTIVE" } },
+        };
+
+        private static readonly string[] AllCombatSchools =
+        {
+            "MAGIC_SCHOOL_DARK", "MAGIC_SCHOOL_DESTRUCTIVE",
+            "MAGIC_SCHOOL_LIGHT", "MAGIC_SCHOOL_SUMMONING"
+        };
+
+        private readonly List<SpellInfo> _chosenSpells = new();
+        private readonly List<SpellInfo> _chosenRunes = new();
+        private Panel _spellsContainer = null!;
+        private Label _goldLabel = null!;
+
+        public SpellTab(TabPage tab, List<SpellInfo> allSpells, string faction, string heroClass, GoldState gold)
+        {
+            _tab = tab;
+            _gold = gold;
+            _allSpells = allSpells;
+            _faction = faction;
+            _heroClass = heroClass;
+
+            BuildUI();
+            RollSpells();
+            _gold.Changed += RefreshGold;
+        }
+
+        private bool IsBarbarian => _heroClass == "HERO_CLASS_BARBARIAN";
+        private bool IsDwarf => _heroClass == "HERO_CLASS_RUNEMAGE";
+        private bool IsAcademy => _heroClass == "HERO_CLASS_WIZARD";
+
+        private string[] GetProfiled() =>
+            ProfiledSchools.TryGetValue(_faction, out var s) ? s : Array.Empty<string>();
+
+        private string[] GetNonProfiled()
+        {
+            var prof = GetProfiled();
+            return AllCombatSchools.Where(s => !prof.Contains(s)).ToArray();
+        }
+
+        private void BuildUI()
+        {
+            _goldLabel = new Label
+            {
+                Parent = _tab,
+                Location = new Point(10, 8),
+                Size = new Size(300, 25),
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                Text = GoldText(),
+            };
+
+            var btnReroll = new Button
+            {
+                Parent = _tab,
+                Text = $"Перебрать ({RerollCost} зол.)",
+                Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                Size = new Size(180, 28),
+                Location = new Point(320, 6),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(60, 60, 80),
+                ForeColor = Color.White,
+            };
+            btnReroll.FlatAppearance.BorderSize = 0;
+            btnReroll.Click += (s, e) =>
+            {
+                if (!_gold.TrySpend(RerollCost))
+                {
+                    MessageBox.Show("Недостаточно золота!", "Заклинания", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                RollSpells();
+            };
+
+            _spellsContainer = new DoubleBufferedPanel
+            {
+                Parent = _tab,
+                Location = new Point(10, 40),
+                Size = new Size(700, 600),
+                AutoScroll = true,
+                BackColor = Color.FromArgb(30, 30, 40),
+            };
+        }
+
+        private void RollSpells()
+        {
+            _chosenSpells.Clear();
+            _chosenRunes.Clear();
+
+            if (IsBarbarian)
+                RollWarcries();
+            else
+                RollCombatSpells();
+
+            if (IsDwarf)
+                RollRunes();
+
+            RebuildUI();
+        }
+
+        private void RollWarcries()
+        {
+            var warcries = _allSpells.Where(s => s.IsWarcry).ToList();
+            var byLevel = warcries.GroupBy(s => s.Level).ToDictionary(g => g.Key, g => g.ToList());
+
+            // Floor 1: 2 warcries, Floors 2-3: 1 each
+            for (int floor = 1; floor <= 3; floor++)
+            {
+                int count = floor == 1 ? 2 : 1;
+                if (byLevel.TryGetValue(floor, out var pool))
+                {
+                    var shuffled = pool.OrderBy(_ => _rng.Next()).ToList();
+                    _chosenSpells.AddRange(shuffled.Take(count));
+                }
+            }
+        }
+
+        private void RollCombatSpells()
+        {
+            var profiled = GetProfiled();
+            var nonProfiled = GetNonProfiled();
+
+            var combatSpells = _allSpells
+                .Where(s => !s.IsRunic && !s.IsWarcry && s.Level >= 1 && s.Level <= 5)
+                .ToList();
+
+            var bySchoolLevel = combatSpells
+                .GroupBy(s => (s.MagicSchool, s.Level))
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            for (int floor = 1; floor <= 5; floor++)
+            {
+                // Profiled: 1 spell from each profiled school (2 total)
+                var usedIds = new HashSet<string>();
+                foreach (var school in profiled)
+                {
+                    var key = (school, floor);
+                    if (bySchoolLevel.TryGetValue(key, out var pool))
+                    {
+                        var pick = pool.Where(s => !usedIds.Contains(s.Id)).OrderBy(_ => _rng.Next()).FirstOrDefault();
+                        if (pick != null) { _chosenSpells.Add(pick); usedIds.Add(pick.Id); }
+                    }
+                }
+
+                // Non-profiled: floors 1-3 get 1; Academy gets +1 on all floors
+                int nonProfCount = floor <= 3 ? 1 : 0;
+                if (IsAcademy) nonProfCount++;
+
+                if (nonProfCount > 0)
+                {
+                    var nonProfPool = nonProfiled
+                        .SelectMany(school => bySchoolLevel.TryGetValue((school, floor), out var p) ? p : Enumerable.Empty<SpellInfo>())
+                        .Where(s => !usedIds.Contains(s.Id))
+                        .OrderBy(_ => _rng.Next())
+                        .ToList();
+
+                    foreach (var pick in nonProfPool.Take(nonProfCount))
+                    {
+                        _chosenSpells.Add(pick);
+                        usedIds.Add(pick.Id);
+                    }
+                }
+            }
+        }
+
+        private void RollRunes()
+        {
+            var runes = _allSpells.Where(s => s.IsRunic).ToList();
+            var byLevel = runes.GroupBy(s => s.Level).ToDictionary(g => g.Key, g => g.ToList());
+
+            for (int floor = 1; floor <= 5; floor++)
+            {
+                if (byLevel.TryGetValue(floor, out var pool))
+                {
+                    var pick = pool.OrderBy(_ => _rng.Next()).FirstOrDefault();
+                    if (pick != null) _chosenRunes.Add(pick);
+                }
+            }
+        }
+
+        private void RebuildUI()
+        {
+            RenderHelper.Freeze(_spellsContainer);
+            _spellsContainer.Controls.Clear();
+
+            int y = 5;
+
+            if (IsBarbarian)
+            {
+                y = BuildFloorHeader(y, "Боевые кличи");
+                for (int floor = 1; floor <= 3; floor++)
+                {
+                    var floorSpells = _chosenSpells.Where(s => s.Level == floor).ToList();
+                    y = BuildFloorRow(y, $"Уровень {floor}", floorSpells);
+                }
+            }
+            else
+            {
+                y = BuildFloorHeader(y, "Заклинания");
+                for (int floor = 1; floor <= 5; floor++)
+                {
+                    var floorSpells = _chosenSpells.Where(s => s.Level == floor).ToList();
+                    y = BuildFloorRow(y, $"Уровень {floor}", floorSpells);
+                }
+            }
+
+            if (IsDwarf && _chosenRunes.Count > 0)
+            {
+                y += 10;
+                y = BuildFloorHeader(y, "Рунная магия");
+                for (int floor = 1; floor <= 5; floor++)
+                {
+                    var floorRunes = _chosenRunes.Where(s => s.Level == floor).ToList();
+                    if (floorRunes.Count > 0)
+                        y = BuildFloorRow(y, $"Уровень {floor}", floorRunes);
+                }
+            }
+
+            RenderHelper.Unfreeze(_spellsContainer);
+        }
+
+        private int BuildFloorHeader(int y, string text)
+        {
+            new Label
+            {
+                Parent = _spellsContainer,
+                Text = text,
+                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                Location = new Point(5, y),
+                AutoSize = true,
+            };
+            return y + 28;
+        }
+
+        private int BuildFloorRow(int y, string label, List<SpellInfo> spells)
+        {
+            new Label
+            {
+                Parent = _spellsContainer,
+                Text = label,
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                ForeColor = Color.FromArgb(180, 200, 255),
+                Location = new Point(10, y),
+                AutoSize = true,
+            };
+            y += 22;
+
+            int x = 15;
+            foreach (var spell in spells)
+            {
+                var card = BuildSpellCard(spell, x, y);
+                _spellsContainer.Controls.Add(card);
+                x += card.Width + 8;
+            }
+
+            return y + 78;
+        }
+
+        private Panel BuildSpellCard(SpellInfo spell, int x, int y)
+        {
+            var schoolColor = spell.MagicSchool switch
+            {
+                "MAGIC_SCHOOL_DARK" => Color.FromArgb(130, 80, 180),
+                "MAGIC_SCHOOL_DESTRUCTIVE" => Color.FromArgb(200, 80, 60),
+                "MAGIC_SCHOOL_LIGHT" => Color.FromArgb(220, 200, 100),
+                "MAGIC_SCHOOL_SUMMONING" => Color.FromArgb(80, 180, 120),
+                "MAGIC_SCHOOL_RUNIC" => Color.FromArgb(100, 160, 220),
+                "MAGIC_SCHOOL_WARCRIES" => Color.FromArgb(200, 140, 60),
+                _ => Color.Gray,
+            };
+
+            var panel = new Panel
+            {
+                Size = new Size(160, 68),
+                Location = new Point(x, y),
+                BackColor = Color.FromArgb(45, 45, 60),
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+
+            var icon = new PictureBox
+            {
+                Parent = panel,
+                Size = new Size(48, 48),
+                Location = new Point(4, 4),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Image = spell.Icon,
+                BackColor = Color.FromArgb(30, 30, 40),
+            };
+
+            var nameLabel = new Label
+            {
+                Parent = panel,
+                Text = spell.Name,
+                Font = new Font("Segoe UI", 8, FontStyle.Bold),
+                ForeColor = schoolColor,
+                Location = new Point(56, 2),
+                Size = new Size(100, 30),
+            };
+
+            string costText = spell.IsRunic && spell.ResourceCost != null
+                ? spell.ResourceCost.ToString()
+                : $"Мана: {spell.ManaCost}";
+
+            var costLabel = new Label
+            {
+                Parent = panel,
+                Text = costText,
+                Font = new Font("Segoe UI", 7),
+                ForeColor = Color.FromArgb(180, 200, 220),
+                Location = new Point(56, 34),
+                Size = new Size(100, 14),
+            };
+
+            var schoolLabel = new Label
+            {
+                Parent = panel,
+                Text = spell.SchoolDisplayName,
+                Font = new Font("Segoe UI", 7),
+                ForeColor = schoolColor,
+                Location = new Point(56, 50),
+                Size = new Size(100, 14),
+            };
+
+            var tip = new ToolTip();
+            tip.SetToolTip(panel, spell.Name);
+            tip.SetToolTip(icon, spell.Name);
+            tip.SetToolTip(nameLabel, spell.Name);
+
+            // Double click — spell detail card
+            void ShowCard(object? s, EventArgs ev)
+            {
+                using var form = new SpellDetailForm(spell);
+                form.ShowDialog();
+            }
+            panel.DoubleClick += ShowCard;
+            icon.DoubleClick += ShowCard;
+            nameLabel.DoubleClick += ShowCard;
+
+            // Swap button
+            var btnSwap = new Button
+            {
+                Parent = panel,
+                Text = "↻",
+                Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                Size = new Size(22, 22),
+                Location = new Point(134, 44),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(70, 70, 90),
+                ForeColor = Color.White,
+            };
+            btnSwap.FlatAppearance.BorderSize = 0;
+            tip.SetToolTip(btnSwap, $"Заменить ({SwapCost} зол.)");
+            btnSwap.Click += (s, e) => SwapSpell(spell);
+
+            return panel;
+        }
+
+        private void SwapSpell(SpellInfo current)
+        {
+            if (!_gold.TrySpend(SwapCost))
+            {
+                MessageBox.Show("Недостаточно золота!", "Заклинания", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            var usedIds = new HashSet<string>(_chosenSpells.Select(s => s.Id));
+            usedIds.UnionWith(_chosenRunes.Select(s => s.Id));
+
+            List<SpellInfo> pool;
+            if (current.IsRunic)
+            {
+                pool = _allSpells
+                    .Where(s => s.IsRunic && s.Level == current.Level && !usedIds.Contains(s.Id))
+                    .ToList();
+            }
+            else if (current.IsWarcry)
+            {
+                pool = _allSpells
+                    .Where(s => s.IsWarcry && s.Level == current.Level && !usedIds.Contains(s.Id))
+                    .ToList();
+            }
+            else
+            {
+                pool = _allSpells
+                    .Where(s => !s.IsRunic && !s.IsWarcry
+                        && s.Level == current.Level
+                        && s.MagicSchool == current.MagicSchool
+                        && !usedIds.Contains(s.Id))
+                    .ToList();
+            }
+
+            if (pool.Count == 0)
+            {
+                _gold.Refund(SwapCost);
+                MessageBox.Show("Нет доступных заклинаний для замены.", "Заклинания", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            var replacement = pool[_rng.Next(pool.Count)];
+
+            if (current.IsRunic)
+            {
+                int idx = _chosenRunes.IndexOf(current);
+                if (idx >= 0) _chosenRunes[idx] = replacement;
+            }
+            else
+            {
+                int idx = _chosenSpells.IndexOf(current);
+                if (idx >= 0) _chosenSpells[idx] = replacement;
+            }
+
+            RebuildUI();
+        }
+
+        private void RefreshGold() => _goldLabel.Text = GoldText();
+        private string GoldText() => $"Золото: {_gold.Remaining}";
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    //  КАРТОЧКА ЗАКЛИНАНИЯ
+    // ─────────────────────────────────────────────────────────────────────────────
+    internal class SpellDetailForm : Form
+    {
+        public SpellDetailForm(SpellInfo spell)
+        {
+            Text = spell.Name;
+            Size = new Size(420, 350);
+            StartPosition = FormStartPosition.CenterParent;
+            BackColor = Color.FromArgb(30, 30, 40);
+            ForeColor = Color.White;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+
+            var schoolColor = spell.MagicSchool switch
+            {
+                "MAGIC_SCHOOL_DARK" => Color.FromArgb(130, 80, 180),
+                "MAGIC_SCHOOL_DESTRUCTIVE" => Color.FromArgb(200, 80, 60),
+                "MAGIC_SCHOOL_LIGHT" => Color.FromArgb(220, 200, 100),
+                "MAGIC_SCHOOL_SUMMONING" => Color.FromArgb(80, 180, 120),
+                "MAGIC_SCHOOL_RUNIC" => Color.FromArgb(100, 160, 220),
+                "MAGIC_SCHOOL_WARCRIES" => Color.FromArgb(200, 140, 60),
+                _ => Color.Gray,
+            };
+
+            if (spell.Icon != null)
+            {
+                new PictureBox
+                {
+                    Parent = this,
+                    Size = new Size(64, 64),
+                    Location = new Point(15, 15),
+                    SizeMode = PictureBoxSizeMode.Zoom,
+                    Image = spell.Icon,
+                    BackColor = Color.FromArgb(40, 40, 55),
+                };
+            }
+
+            new Label
+            {
+                Parent = this,
+                Text = spell.Name,
+                Font = new Font("Segoe UI", 14, FontStyle.Bold),
+                ForeColor = schoolColor,
+                Location = new Point(90, 15),
+                AutoSize = true,
+            };
+
+            new Label
+            {
+                Parent = this,
+                Text = $"{spell.SchoolDisplayName}  •  Уровень {spell.Level}",
+                Font = new Font("Segoe UI", 10),
+                ForeColor = Color.FromArgb(180, 200, 220),
+                Location = new Point(90, 45),
+                AutoSize = true,
+            };
+
+            string costText = spell.IsRunic && spell.ResourceCost != null
+                ? $"Стоимость: {spell.ResourceCost}"
+                : $"Мана: {spell.ManaCost}";
+
+            new Label
+            {
+                Parent = this,
+                Text = costText,
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                ForeColor = Color.FromArgb(100, 200, 255),
+                Location = new Point(15, 90),
+                AutoSize = true,
+            };
+
+            new Label
+            {
+                Parent = this,
+                Text = spell.Description,
+                Font = new Font("Segoe UI", 9),
+                ForeColor = Color.LightGray,
+                Location = new Point(15, 120),
                 AutoSize = true,
                 MaximumSize = new Size(375, 0),
             };

@@ -176,6 +176,56 @@ namespace Launcher
         public string Faction => GameDataParser.TownToFactionPublic(TownType);
     }
 
+    public class SpellResourceCost
+    {
+        public int Wood { get; set; }
+        public int Ore { get; set; }
+        public int Mercury { get; set; }
+        public int Crystal { get; set; }
+        public int Sulfur { get; set; }
+        public int Gem { get; set; }
+        public int Gold { get; set; }
+
+        public override string ToString()
+        {
+            var parts = new List<string>();
+            if (Wood > 0) parts.Add($"Дерево: {Wood}");
+            if (Ore > 0) parts.Add($"Руда: {Ore}");
+            if (Mercury > 0) parts.Add($"Ртуть: {Mercury}");
+            if (Crystal > 0) parts.Add($"Кристалл: {Crystal}");
+            if (Sulfur > 0) parts.Add($"Сера: {Sulfur}");
+            if (Gem > 0) parts.Add($"Самоцветы: {Gem}");
+            if (Gold > 0) parts.Add($"Золото: {Gold}");
+            return parts.Count > 0 ? string.Join(", ", parts) : "0";
+        }
+    }
+
+    public class SpellInfo
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Description { get; set; } = "";
+        public Image? Icon { get; set; }
+        public int Level { get; set; }
+        public string MagicSchool { get; set; } = "";
+        public int ManaCost { get; set; }
+        public SpellResourceCost? ResourceCost { get; set; }
+
+        public bool IsRunic => MagicSchool == "MAGIC_SCHOOL_RUNIC";
+        public bool IsWarcry => MagicSchool == "MAGIC_SCHOOL_WARCRIES";
+
+        public string SchoolDisplayName => MagicSchool switch
+        {
+            "MAGIC_SCHOOL_DARK" => "Тёмная магия",
+            "MAGIC_SCHOOL_DESTRUCTIVE" => "Магия Хаоса",
+            "MAGIC_SCHOOL_LIGHT" => "Магия Света",
+            "MAGIC_SCHOOL_SUMMONING" => "Магия Призыва",
+            "MAGIC_SCHOOL_RUNIC" => "Рунная магия",
+            "MAGIC_SCHOOL_WARCRIES" => "Боевые кличи",
+            _ => MagicSchool
+        };
+    }
+
     internal readonly struct VfsEntry
     {
         public string ArchivePath { get; init; }
@@ -1167,6 +1217,136 @@ namespace Launcher
                 }
 
                 result.Add(info);
+            });
+
+            return result.ToList();
+        }
+
+        public List<SpellInfo> ParseSpells()
+        {
+            var spellDirs = new[]
+            {
+                "/GameMechanics/Spell/Combat_Spells/",
+                "/GameMechanics/Spell/Hero_Abilities/Barbarian/",
+                "/GameMechanics/Spell/RunicMagic/",
+            };
+
+            var spellPaths = new ConcurrentBag<string>();
+            foreach (var dir in spellDirs)
+            {
+                foreach (var kv in _vfs)
+                {
+                    string path = kv.Key;
+                    if (!path.StartsWith(dir, StringComparison.OrdinalIgnoreCase)) continue;
+                    if (!path.EndsWith(".xdb", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    string fileName = path.Substring(path.LastIndexOf('/') + 1);
+                    if (fileName.Contains("SpellVisual", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (fileName.StartsWith("Mass_", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (fileName.StartsWith("Empowered_", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    spellPaths.Add(path);
+                }
+            }
+
+            PreloadFiles(spellPaths);
+
+            var textPaths = new ConcurrentBag<string>();
+            var iconXdbPaths = new ConcurrentBag<string>();
+            var validSpells = new ConcurrentBag<(string path, XDocument doc)>();
+
+            Parallel.ForEach(spellPaths, sp =>
+            {
+                var doc = ReadXdb(sp);
+                if (doc?.Root == null) return;
+                string rootName = doc.Root.Name.LocalName;
+                if (rootName == "SpellVisual" || rootName == "Effect" || rootName == "Sound") return;
+
+                string school = doc.Root.Element("MagicSchool")?.Value ?? "";
+                if (string.IsNullOrEmpty(school)) return;
+
+                int level = ParseInt(doc.Root, "Level");
+                if (school != "MAGIC_SCHOOL_WARCRIES" && school != "MAGIC_SCHOOL_RUNIC" && (level < 1 || level > 5)) return;
+
+                validSpells.Add((sp, doc));
+
+                string nameHref = doc.Root.Element("NameFileRef")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(nameHref)) textPaths.Add(ResolvePath(sp, ExtractPath(nameHref)));
+
+                string descHref = doc.Root.Element("LongDescriptionFileRef")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(descHref)) textPaths.Add(ResolvePath(sp, ExtractPath(descHref)));
+
+                string texHref = doc.Root.Element("Texture")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(texHref)) iconXdbPaths.Add(ResolvePath(sp, ExtractPath(texHref)));
+            });
+
+            PreloadFiles(textPaths.Distinct(StringComparer.OrdinalIgnoreCase));
+            PreloadFiles(iconXdbPaths.Distinct(StringComparer.OrdinalIgnoreCase));
+
+            var ddsPaths = new ConcurrentBag<string>();
+            Parallel.ForEach(iconXdbPaths.Distinct(StringComparer.OrdinalIgnoreCase), ixp =>
+            {
+                var texXdb = ReadXdb(ixp);
+                string destName = texXdb?.Root?.Element("DestName")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(destName))
+                    ddsPaths.Add(ResolvePath(ixp, destName));
+            });
+            PreloadFiles(ddsPaths.Distinct(StringComparer.OrdinalIgnoreCase));
+
+            var result = new ConcurrentBag<SpellInfo>();
+
+            Parallel.ForEach(validSpells, pair =>
+            {
+                var root = pair.doc.Root!;
+                string fileName = pair.path.Substring(pair.path.LastIndexOf('/') + 1);
+                string id = System.IO.Path.GetFileNameWithoutExtension(fileName);
+
+                var spell = new SpellInfo
+                {
+                    Id = id,
+                    Level = ParseInt(root, "Level"),
+                    MagicSchool = root.Element("MagicSchool")?.Value ?? "",
+                    ManaCost = ParseInt(root, "TrainedCost"),
+                };
+
+                string nameHref = root.Element("NameFileRef")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(nameHref))
+                {
+                    var nd = ReadFile(ResolvePath(pair.path, ExtractPath(nameHref)));
+                    if (nd != null) spell.Name = StripTags(DetectAndDecode(nd));
+                }
+
+                string descHref = root.Element("LongDescriptionFileRef")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(descHref))
+                {
+                    var nd = ReadFile(ResolvePath(pair.path, ExtractPath(descHref)));
+                    if (nd != null) spell.Description = StripTags(DetectAndDecode(nd));
+                }
+
+                string texHref = root.Element("Texture")?.Attribute("href")?.Value ?? "";
+                if (!string.IsNullOrEmpty(texHref))
+                    spell.Icon = LoadDdsIcon(ResolvePath(pair.path, ExtractPath(texHref)));
+
+                var costEl = root.Element("sSpellCost");
+                if (costEl != null)
+                {
+                    var cost = new SpellResourceCost
+                    {
+                        Wood = ParseInt(costEl, "Wood"),
+                        Ore = ParseInt(costEl, "Ore"),
+                        Mercury = ParseInt(costEl, "Mercury"),
+                        Crystal = ParseInt(costEl, "Crystal"),
+                        Sulfur = ParseInt(costEl, "Sulfur"),
+                        Gem = ParseInt(costEl, "Gem"),
+                        Gold = ParseInt(costEl, "Gold"),
+                    };
+                    if (cost.Wood + cost.Ore + cost.Mercury + cost.Crystal + cost.Sulfur + cost.Gem + cost.Gold > 0)
+                        spell.ResourceCost = cost;
+                }
+
+                if (string.IsNullOrEmpty(spell.Name)) spell.Name = id;
+
+                result.Add(spell);
             });
 
             return result.ToList();
