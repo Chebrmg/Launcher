@@ -2209,17 +2209,20 @@ namespace Launcher
                 // Check perk slot availability
                 if (!HasPerkSlot(perk.BasicSkillId)) continue;
 
-                // Class filter: perk HeroClass must be NONE or match hero class
-                if (perk.IsRacial && perk.HeroClass != heroClass) continue;
-
-                // Check prerequisites for this class
+                // Class filter + prerequisites
                 if (perk.Prerequisites.Count > 0)
                 {
+                    // Perks with SkillPrerequisites: class determined by prereq entries
                     var classPrereqs = perk.Prerequisites.Where(p => p.HeroClass == heroClass).ToList();
                     if (classPrereqs.Count == 0)
-                        continue; // perk has prereqs but not for this class — unavailable
+                        continue; // no prereq entry for this class — unavailable
                     bool met = classPrereqs.Any(cp => cp.DependencyIds.All(d => takenPerkIds.Contains(d)));
                     if (!met) continue;
+                }
+                else
+                {
+                    // Perks without SkillPrerequisites: use HeroClass field
+                    if (perk.IsRacial && perk.HeroClass != heroClass) continue;
                 }
 
                 result.Add(perk);
