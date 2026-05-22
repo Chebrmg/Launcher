@@ -626,7 +626,7 @@ namespace Launcher
                 try
                 {
                     string path = PresetGenerator.Generate(userModsDir, preset1, preset2,
-                        _allSpells, _faction1, _faction2);
+                        _faction1, _faction2);
                     MessageBox.Show($"Пресет сохранён:\n{path}", "Готов!",
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
