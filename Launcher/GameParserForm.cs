@@ -57,7 +57,7 @@ namespace Launcher
     // ─────────────────────────────────────────────────────────────────────────────
     // Слот армии
     // ─────────────────────────────────────────────────────────────────────────────
-    internal class ArmySlot
+    public class ArmySlot
     {
         public CreatureInfo? Creature { get; set; }
         public int Count { get; set; }
