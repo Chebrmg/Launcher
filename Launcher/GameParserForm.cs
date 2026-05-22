@@ -2162,8 +2162,8 @@ namespace Launcher
             var takenPerkSet = new HashSet<string>(_takenPerks, StringComparer.OrdinalIgnoreCase);
             var availPerks = GetAvailablePerks(heroClass, allTakenSkillIds, takenPerkSet);
 
-            var primaryPerks = availPerks.Where(p => !HasPrereqsForClass(p, heroClass)).ToList();
-            var secondaryPerks = availPerks.Where(p => HasPrereqsForClass(p, heroClass)).ToList();
+            var primaryPerks = availPerks.Where(p => p.Prerequisites.Count == 0 || !HasPrereqsForClass(p, heroClass)).ToList();
+            var secondaryPerks = availPerks.Where(p => p.Prerequisites.Count > 0 && HasPrereqsForClass(p, heroClass)).ToList();
 
             // RIGHT-UPPER: primary perk, or secondary if no primaries
             if (primaryPerks.Count > 0)
@@ -2216,11 +2216,10 @@ namespace Launcher
                 if (perk.Prerequisites.Count > 0)
                 {
                     var classPrereqs = perk.Prerequisites.Where(p => p.HeroClass == heroClass).ToList();
-                    if (classPrereqs.Count > 0)
-                    {
-                        bool met = classPrereqs.Any(cp => cp.DependencyIds.All(d => takenPerkIds.Contains(d)));
-                        if (!met) continue;
-                    }
+                    if (classPrereqs.Count == 0)
+                        continue; // perk has prereqs but not for this class — unavailable
+                    bool met = classPrereqs.Any(cp => cp.DependencyIds.All(d => takenPerkIds.Contains(d)));
+                    if (!met) continue;
                 }
 
                 result.Add(perk);
