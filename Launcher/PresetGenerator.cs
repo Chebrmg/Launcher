@@ -182,9 +182,15 @@ namespace Launcher
             // Spells + runes combined
             sb.AppendLine("<spellIDs>");
             foreach (var spell in p.Spells)
-                sb.AppendLine($"<Item>{spell.Id}</Item>");
+            {
+                string sid = !string.IsNullOrEmpty(spell.GameId) ? spell.GameId : spell.Id;
+                sb.AppendLine($"<Item>{sid}</Item>");
+            }
             foreach (var rune in p.Runes)
-                sb.AppendLine($"<Item>{rune.Id}</Item>");
+            {
+                string sid = !string.IsNullOrEmpty(rune.GameId) ? rune.GameId : rune.Id;
+                sb.AppendLine($"<Item>{sid}</Item>");
+            }
             sb.AppendLine("</spellIDs>");
 
             sb.AppendLine("<Ballista>true</Ballista>");
@@ -234,12 +240,22 @@ namespace Launcher
         {
             var sb = new StringBuilder();
             sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
-            sb.AppendLine("<UndividedSpells>");
-            sb.AppendLine("<spellIDs>");
+            sb.AppendLine("<Table_Spell_SpellID ObjectRecordID=\"-1\">");
+            sb.AppendLine("\t<objects>");
+            sb.AppendLine("\t\t<Item>");
+            sb.AppendLine("\t\t\t<ID>SPELL_NONE</ID>");
+            sb.AppendLine("\t\t\t<Obj/>");
+            sb.AppendLine("\t\t</Item>");
             foreach (var spell in allSpells)
-                sb.AppendLine($"<Item>{spell.Id}</Item>");
-            sb.AppendLine("</spellIDs>");
-            sb.AppendLine("</UndividedSpells>");
+            {
+                if (string.IsNullOrEmpty(spell.GameId)) continue;
+                sb.AppendLine("\t\t<Item>");
+                sb.AppendLine($"\t\t\t<ID>{spell.GameId}</ID>");
+                sb.AppendLine($"\t\t\t<Obj href=\"{spell.ObjHref}\"/>");
+                sb.AppendLine("\t\t</Item>");
+            }
+            sb.AppendLine("\t</objects>");
+            sb.AppendLine("</Table_Spell_SpellID>");
             return sb.ToString();
         }
 

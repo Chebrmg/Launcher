@@ -203,6 +203,7 @@ namespace Launcher
     public class SpellInfo
     {
         public string Id { get; set; } = "";
+        public string GameId { get; set; } = "";
         public string Name { get; set; } = "";
         public string Description { get; set; } = "";
         public Image? Icon { get; set; }
@@ -211,6 +212,7 @@ namespace Launcher
         public int ManaCost { get; set; }
         public SpellResourceCost? ResourceCost { get; set; }
         public string SourcePath { get; set; } = "";
+        public string ObjHref { get; set; } = "";
 
         public bool IsRunic => MagicSchool == "MAGIC_SCHOOL_RUNIC";
         public bool IsWarcry => MagicSchool == "MAGIC_SCHOOL_WARCRIES";
@@ -1352,6 +1354,34 @@ namespace Launcher
             });
 
             return result.ToList();
+        }
+
+        public void MapSpellGameIds(List<SpellInfo> spells)
+        {
+            var doc = ReadXdb("/GameMechanics/RefTables/UndividedSpells.xdb");
+            if (doc?.Root == null) return;
+
+            var lookup = new Dictionary<string, (string gameId, string objHref)>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in doc.Root.Element("objects")?.Elements("Item") ?? Enumerable.Empty<XElement>())
+            {
+                string gameId = item.Element("ID")?.Value ?? "";
+                string objHref = item.Element("Obj")?.Attribute("href")?.Value ?? "";
+                if (string.IsNullOrEmpty(gameId) || string.IsNullOrEmpty(objHref)) continue;
+
+                int hashIdx = objHref.IndexOf('#');
+                string path = NormalizePath(hashIdx >= 0 ? objHref.Substring(0, hashIdx) : objHref);
+                lookup[path] = (gameId, objHref);
+            }
+
+            foreach (var spell in spells)
+            {
+                string normPath = NormalizePath(spell.SourcePath);
+                if (lookup.TryGetValue(normPath, out var entry))
+                {
+                    spell.GameId = entry.gameId;
+                    spell.ObjHref = entry.objHref;
+                }
+            }
         }
 
         public void Dispose()

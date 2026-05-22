@@ -265,6 +265,7 @@ namespace Launcher
                 var heroClasses = parser.ParseHeroClasses();
                 var heroes = parser.ParseHeroes();
                 var spells = parser.ParseSpells();
+                parser.MapSpellGameIds(spells);
                 return (c1, c2, artifacts, skills, heroClasses, heroes, spells, parser.DiagInfo);
             }).ContinueWith(task =>
             {
