@@ -112,10 +112,17 @@ namespace Launcher
         private string _faction2 = "";
         private int _totalGold = 120000;
 
+        private UserAccount? _player1Account;
+        private UserAccount? _player2Account;
+        private Button _btnLogin1 = null!;
+        private Button _btnLogin2 = null!;
+
         public GameParserForm(string gameRoot)
         {
             _gameRoot = gameRoot;
             this.DoubleBuffered = true;
+            DatabaseManager.Init(System.IO.Path.GetDirectoryName(
+                System.Reflection.Assembly.GetExecutingAssembly().Location) ?? gameRoot);
             InitUI();
         }
 
@@ -195,6 +202,77 @@ namespace Launcher
             foreach (string f in GameDataParser.SelectableFactions) _cmbFaction2.Items.Add(f);
             _cmbFaction2.SelectedIndex = 1;
 
+            _btnLogin1 = new Button
+            {
+                Parent = _selectionPanel,
+                Text = "Войти (Игрок 1)",
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                Size = new Size(180, 32),
+                Location = new Point(720, 218),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(50, 120, 200),
+                ForeColor = Color.White,
+            };
+            _btnLogin1.FlatAppearance.BorderSize = 0;
+            _btnLogin1.Click += (s, ev) =>
+            {
+                using var form = new LoginForm();
+                if (form.ShowDialog(this) == DialogResult.OK && form.LoggedInUser != null)
+                {
+                    _player1Account = form.LoggedInUser;
+                    _btnLogin1.Text = _player1Account.Username + (_player1Account.IsAdmin ? " [A]" : "");
+                    _btnLogin1.BackColor = Color.FromArgb(50, 160, 50);
+                }
+            };
+
+            _btnLogin2 = new Button
+            {
+                Parent = _selectionPanel,
+                Text = "Войти (Игрок 2)",
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                Size = new Size(180, 32),
+                Location = new Point(720, 278),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(50, 120, 200),
+                ForeColor = Color.White,
+            };
+            _btnLogin2.FlatAppearance.BorderSize = 0;
+            _btnLogin2.Click += (s, ev) =>
+            {
+                using var form = new LoginForm();
+                if (form.ShowDialog(this) == DialogResult.OK && form.LoggedInUser != null)
+                {
+                    _player2Account = form.LoggedInUser;
+                    _btnLogin2.Text = _player2Account.Username + (_player2Account.IsAdmin ? " [A]" : "");
+                    _btnLogin2.BackColor = Color.FromArgb(50, 160, 50);
+                }
+            };
+
+            var btnProfile = new Button
+            {
+                Parent = _selectionPanel,
+                Text = "Профиль / Дуэли",
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                Size = new Size(180, 32),
+                Location = new Point(720, 340),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(100, 80, 160),
+                ForeColor = Color.White,
+            };
+            btnProfile.FlatAppearance.BorderSize = 0;
+            btnProfile.Click += (s, ev) =>
+            {
+                var account = _player1Account ?? _player2Account;
+                if (account == null)
+                {
+                    MessageBox.Show("Сначала войдите в аккаунт!", "Профиль",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                using var form = new PlayerProfileForm(account);
+                form.ShowDialog(this);
+            };
+
             _btnStart = new Button
             {
                 Parent = _selectionPanel,
@@ -241,6 +319,20 @@ namespace Launcher
 
         private void BtnStart_Click(object? sender, EventArgs e)
         {
+            if (_player1Account == null || _player2Account == null)
+            {
+                MessageBox.Show("Оба игрока должны войти в аккаунт!", "Парсер",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            if (_player1Account.Id == _player2Account.Id)
+            {
+                MessageBox.Show("Игроки должны войти в разные аккаунты!", "Парсер",
+                    MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
             _faction1 = _cmbFaction1.SelectedItem?.ToString() ?? "";
             _faction2 = _cmbFaction2.SelectedItem?.ToString() ?? "";
 
@@ -627,6 +719,16 @@ namespace Launcher
                 {
                     string path = PresetGenerator.Generate(userModsDir, preset1, preset2,
                         _faction1, _faction2);
+
+                    if (_player1Account != null && _player2Account != null)
+                    {
+                        int duelId = DatabaseManager.SaveDuel(_player1Account.Id, _player2Account.Id);
+                        DatabaseManager.SaveDuelHero(BuildHeroSnapshot(duelId, _player1Account.Id,
+                            _faction1, hero1, preset1));
+                        DatabaseManager.SaveDuelHero(BuildHeroSnapshot(duelId, _player2Account.Id,
+                            _faction2, hero2, preset2));
+                    }
+
                     MessageBox.Show($"Пресет сохранён:\n{path}", "Готов!",
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
@@ -658,6 +760,51 @@ namespace Launcher
                 Spells = spellTab.ChosenSpells.ToList(),
                 Runes = spellTab.ChosenRunes.ToList(),
                 GoldSpent = gold.Spent,
+            };
+        }
+
+        private static DuelHeroSnapshot BuildHeroSnapshot(int duelId, int playerId,
+            string faction, HeroInfo hero, PlayerPreset preset)
+        {
+            var armyList = new List<object>();
+            foreach (var slot in preset.ArmySlots)
+            {
+                if (slot?.Creature != null && slot.Count > 0)
+                    armyList.Add(new { Creature = slot.Creature.Id, slot.Count });
+            }
+
+            var skillsList = new List<object>();
+            foreach (var (skillId, mastery) in preset.Skills)
+                skillsList.Add(new { SkillId = skillId, Mastery = mastery });
+
+            var spellIds = new List<string>();
+            foreach (var sp in preset.Spells)
+                spellIds.Add(!string.IsNullOrEmpty(sp.GameId) ? sp.GameId : sp.Id);
+            foreach (var rn in preset.Runes)
+                spellIds.Add(!string.IsNullOrEmpty(rn.GameId) ? rn.GameId : rn.Id);
+
+            var artifactIds = new List<string>();
+            foreach (var kv in preset.EquippedArtifacts)
+            {
+                if (kv.Value != null) artifactIds.Add(kv.Value.Id);
+            }
+
+            return new DuelHeroSnapshot
+            {
+                DuelId = duelId,
+                PlayerId = playerId,
+                Faction = faction,
+                HeroName = hero.Name,
+                HeroLevel = preset.HeroLevel,
+                Offence = preset.TotalOffence,
+                Defence = preset.TotalDefence,
+                Spellpower = preset.TotalSpellpower,
+                Knowledge = preset.TotalKnowledge,
+                SkillsJson = System.Text.Json.JsonSerializer.Serialize(skillsList),
+                PerksJson = System.Text.Json.JsonSerializer.Serialize(preset.Perks),
+                SpellsJson = System.Text.Json.JsonSerializer.Serialize(spellIds),
+                ArmyJson = System.Text.Json.JsonSerializer.Serialize(armyList),
+                ArtifactsJson = System.Text.Json.JsonSerializer.Serialize(artifactIds),
             };
         }
     }
