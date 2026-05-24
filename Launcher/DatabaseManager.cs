@@ -328,7 +328,8 @@ namespace Launcher
         {
             using var conn = Open();
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = "DELETE FROM DuelHeroes WHERE PlayerId = @id";
+            cmd.CommandText = @"DELETE FROM DuelHeroes WHERE DuelId IN 
+                (SELECT Id FROM Duels WHERE Player1Id = @id OR Player2Id = @id)";
             cmd.Parameters.AddWithValue("@id", userId);
             cmd.ExecuteNonQuery();
 
