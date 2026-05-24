@@ -66,7 +66,7 @@ namespace Launcher
         }
 
         public static string Generate(string outputDir, PlayerPreset p1, PlayerPreset p2,
-            List<SpellInfo> allParsedSpells, string faction1, string faction2)
+            string faction1, string faction2)
         {
             string fileName = "ER_presets_ru.h5u";
             string outputPath = Path.Combine(outputDir, fileName);
@@ -83,8 +83,6 @@ namespace Launcher
             AddEntry(zip, "Maps/DuelMode/PresetMap/map.xdb", BuildMapXdb(town1, town2));
             AddEntry(zip, "Maps/DuelMode/Heroes/AdvMapHero1.xdb", BuildHeroXdb(p1));
             AddEntry(zip, "Maps/DuelMode/Heroes/AdvMapHero2.xdb", BuildHeroXdb(p2));
-            AddEntry(zip, "GameMechanics/RefTables/UndividedSpells.xdb",
-                BuildUndividedSpellsXdb(allParsedSpells));
 
             return outputPath;
         }
@@ -234,29 +232,6 @@ namespace Launcher
 </Item>
 </presets>
 </DuelPresets>";
-        }
-
-        private static string BuildUndividedSpellsXdb(List<SpellInfo> allSpells)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
-            sb.AppendLine("<Table_Spell_SpellID ObjectRecordID=\"-1\">");
-            sb.AppendLine("\t<objects>");
-            sb.AppendLine("\t\t<Item>");
-            sb.AppendLine("\t\t\t<ID>SPELL_NONE</ID>");
-            sb.AppendLine("\t\t\t<Obj/>");
-            sb.AppendLine("\t\t</Item>");
-            foreach (var spell in allSpells)
-            {
-                if (string.IsNullOrEmpty(spell.GameId)) continue;
-                sb.AppendLine("\t\t<Item>");
-                sb.AppendLine($"\t\t\t<ID>{spell.GameId}</ID>");
-                sb.AppendLine($"\t\t\t<Obj href=\"{spell.ObjHref}\"/>");
-                sb.AppendLine("\t\t</Item>");
-            }
-            sb.AppendLine("\t</objects>");
-            sb.AppendLine("</Table_Spell_SpellID>");
-            return sb.ToString();
         }
 
         private static string BuildMapXdb(string town1, string town2)
