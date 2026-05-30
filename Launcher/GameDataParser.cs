@@ -334,7 +334,13 @@ namespace Launcher
             string userModDir = Path.Combine(_gameRoot, "UserMods");
 
             if (Directory.Exists(dataDir)) archives.AddRange(Directory.GetFiles(dataDir, "*.pak"));
-            if (Directory.Exists(userModDir)) archives.AddRange(Directory.GetFiles(userModDir, "*.h5u"));
+            if (Directory.Exists(userModDir))
+            {
+                // Пропускаем собственный выходной файл лаунчера, иначе VFS держит его
+                // открытым и генерация не может перезаписать пресет.
+                archives.AddRange(Directory.GetFiles(userModDir, "*.h5u")
+                    .Where(f => !string.Equals(Path.GetFileName(f), "ER_presets_ru.h5u", StringComparison.OrdinalIgnoreCase)));
+            }
 
             var diagLines = new ConcurrentBag<string>
             {
