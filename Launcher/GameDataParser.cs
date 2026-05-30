@@ -442,7 +442,9 @@ namespace Launcher
             });
         }
 
-        private byte[]? ReadFile(string virtualPath)
+        public bool HasFile(string virtualPath) => _vfs.ContainsKey(NormalizePath(virtualPath));
+
+        public byte[]? ReadFile(string virtualPath)
         {
             string norm = NormalizePath(virtualPath);
 
@@ -473,7 +475,7 @@ namespace Launcher
             catch { return null; }
         }
 
-        private XDocument? ReadXdb(string virtualPath)
+        public XDocument? ReadXdb(string virtualPath)
         {
             var data = ReadFile(virtualPath);
             if (data == null) return null;
@@ -483,6 +485,12 @@ namespace Launcher
                 return XDocument.Load(ms);
             }
             catch { return null; }
+        }
+
+        public string? ReadText(string virtualPath)
+        {
+            var data = ReadFile(virtualPath);
+            return data == null ? null : DetectAndDecode(data);
         }
 
         private static string NormalizePath(string path) =>

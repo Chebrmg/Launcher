@@ -238,6 +238,7 @@ namespace Launcher
         private List<SpellInfo> _allSpells = new();
         private List<CreatureInfo> _creatures1 = new();
         private List<CreatureInfo> _creatures2 = new();
+        private GameDataParser? _parser;
 
         private void BtnStart_Click(object? sender, EventArgs e)
         {
@@ -266,6 +267,7 @@ namespace Launcher
                 var heroes = parser.ParseHeroes();
                 var spells = parser.ParseSpells();
                 parser.MapSpellGameIds(spells);
+                _parser = parser;
                 return (c1, c2, artifacts, skills, heroClasses, heroes, spells, parser.DiagInfo);
             }).ContinueWith(task =>
             {
@@ -626,7 +628,7 @@ namespace Launcher
                 try
                 {
                     string path = PresetGenerator.Generate(userModsDir, preset1, preset2,
-                        _faction1, _faction2);
+                        _faction1, _faction2, _parser);
 
                     MessageBox.Show($"Пресет сохранён:\n{path}", "Готов!",
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
