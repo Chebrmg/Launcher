@@ -1,12 +1,40 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
+using System.Xml.Linq;
 
 namespace Launcher
 {
+    // ── Конфиг спец-модификаций (duel_settings.json в корне мода) ──────────────
+    public class DuelSettings
+    {
+        public string? FileDate { get; set; }
+        public List<HeroSpec>? Heroes { get; set; }
+    }
+
+    public class HeroSpec
+    {
+        public string InternalName { get; set; } = "";
+        public string? SpecNameFileRef { get; set; }
+        public string? SpecDescFileRef { get; set; }
+        public List<SpecModification>? Modifications { get; set; }
+    }
+
+    public class SpecModification
+    {
+        public string File { get; set; } = "";
+        public string Path { get; set; } = "";
+        public string Operation { get; set; } = "ADD";   // ADD | MULT | SET
+        public string Source { get; set; } = "NONE";     // NONE|LEVEL|OFFENCE|DEFENCE|SPELLPOWER|KNOWLEDGE
+        public double Base { get; set; }
+        public double Coef { get; set; }
+    }
+
     public class PlayerPreset
     {
         public HeroInfo Hero { get; set; } = null!;
@@ -66,7 +94,7 @@ namespace Launcher
         }
 
         public static string Generate(string outputDir, PlayerPreset p1, PlayerPreset p2,
-            string faction1, string faction2)
+            string faction1, string faction2, GameDataParser? vfs = null)
         {
             string fileName = "ER_presets_ru.h5u";
             string outputPath = Path.Combine(outputDir, fileName);
@@ -84,7 +112,185 @@ namespace Launcher
             AddEntry(zip, "Maps/DuelMode/Heroes/AdvMapHero1.xdb", BuildHeroXdb(p1));
             AddEntry(zip, "Maps/DuelMode/Heroes/AdvMapHero2.xdb", BuildHeroXdb(p2));
 
+            if (vfs != null)
+            {
+                try { ApplySpecs(zip, vfs, p1, p2); }
+                catch { /* спец-модификации не критичны для формирования пресета */ }
+            }
+
             return outputPath;
+        }
+
+        // ── Спец-модификации: подкладываем изменённые копии игровых файлов ─────────
+        private static void ApplySpecs(ZipArchive zip, GameDataParser vfs,
+            PlayerPreset p1, PlayerPreset p2)
+        {
+            string? cfgText = vfs.ReadText("/duel_settings.json");
+            if (string.IsNullOrWhiteSpace(cfgText)) return;
+
+            DuelSettings? cfg;
+            try
+            {
+                cfg = JsonSerializer.Deserialize<DuelSettings>(cfgText,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true, AllowTrailingCommas = true, ReadCommentHandling = JsonCommentHandling.Skip });
+            }
+            catch { return; }
+
+            if (cfg?.Heroes == null || cfg.Heroes.Count == 0) return;
+
+            DateTime fileDate = new DateTime(2032, 1, 1);
+            if (!string.IsNullOrWhiteSpace(cfg.FileDate) &&
+                DateTime.TryParse(cfg.FileDate, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsedDate))
+                fileDate = parsedDate;
+
+            var players = new[] { p1, p2 };
+            var selected = new List<(PlayerPreset preset, HeroSpec spec)>();
+            foreach (var preset in players)
+            {
+                if (preset?.Hero == null) continue;
+                var spec = cfg.Heroes.FirstOrDefault(h =>
+                    string.Equals(h.InternalName, preset.Hero.InternalName, StringComparison.OrdinalIgnoreCase));
+                if (spec != null) selected.Add((preset, spec));
+            }
+            if (selected.Count == 0) return;
+
+            // (A) Изменения игровых файлов — группируем по файлу (файл глобальный → одна копия)
+            var modsByFile = new Dictionary<string, List<(SpecModification mod, PlayerPreset preset)>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var (preset, spec) in selected)
+            {
+                if (spec.Modifications == null) continue;
+                foreach (var mod in spec.Modifications)
+                {
+                    if (string.IsNullOrWhiteSpace(mod.File) || string.IsNullOrWhiteSpace(mod.Path)) continue;
+                    if (!modsByFile.TryGetValue(mod.File, out var list))
+                    {
+                        list = new List<(SpecModification, PlayerPreset)>();
+                        modsByFile[mod.File] = list;
+                    }
+                    list.Add((mod, preset));
+                }
+            }
+
+            foreach (var kv in modsByFile)
+            {
+                var doc = vfs.ReadXdb(kv.Key);
+                if (doc?.Root == null) continue;
+                foreach (var (mod, preset) in kv.Value)
+                    ApplyNumericMod(doc, mod, preset);
+                AddXdbEntry(zip, kv.Key, doc, fileDate);
+            }
+
+            // (B) Спека в копию xdb самого героя (SpecializationName/DescFileRef)
+            foreach (var (preset, spec) in selected)
+            {
+                if (string.IsNullOrWhiteSpace(spec.SpecNameFileRef) && string.IsNullOrWhiteSpace(spec.SpecDescFileRef))
+                    continue;
+
+                string folder = TownToFolder.TryGetValue(preset.Hero.TownType, out var f) ? f : "Haven";
+                string sharedPath = $"/MapObjects/{folder}/{preset.Hero.InternalName}.(AdvMapHeroShared).xdb";
+
+                var hdoc = vfs.ReadXdb(sharedPath);
+                if (hdoc?.Root == null) continue;
+
+                if (!string.IsNullOrWhiteSpace(spec.SpecNameFileRef))
+                    SetHrefChild(hdoc.Root, "SpecializationNameFileRef", spec.SpecNameFileRef!);
+                if (!string.IsNullOrWhiteSpace(spec.SpecDescFileRef))
+                    SetHrefChild(hdoc.Root, "SpecializationDescFileRef", spec.SpecDescFileRef!);
+
+                AddXdbEntry(zip, sharedPath, hdoc, fileDate);
+            }
+        }
+
+        private static void ApplyNumericMod(XDocument doc, SpecModification mod, PlayerPreset preset)
+        {
+            var segs = mod.Path.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (segs.Length == 0) return;
+
+            string? attr = null;
+            if (segs[^1].StartsWith("@", StringComparison.Ordinal))
+            {
+                attr = segs[^1][1..];
+                segs = segs[..^1];
+            }
+
+            var el = NavigateElement(doc, segs);
+            if (el == null) return;
+
+            string origStr = attr != null ? (el.Attribute(attr)?.Value ?? "") : el.Value;
+            double orig = 0;
+            double.TryParse(origStr.Trim(), NumberStyles.Any, CultureInfo.InvariantCulture, out orig);
+
+            double src = ResolveSource(mod.Source, preset);
+            double amount = mod.Base + mod.Coef * src;
+            double newVal = (mod.Operation ?? "ADD").Trim().ToUpperInvariant() switch
+            {
+                "ADD" => orig + amount,
+                "MULT" => orig * amount,
+                "SET" => amount,
+                _ => orig,
+            };
+
+            string formatted = FormatLikeOriginal(origStr, newVal);
+            if (attr != null) el.SetAttributeValue(attr, formatted);
+            else el.Value = formatted;
+        }
+
+        private static XElement? NavigateElement(XDocument doc, string[] segments)
+        {
+            XElement? cur = doc.Root;
+            for (int i = 0; i < segments.Length; i++)
+            {
+                if (cur == null) return null;
+                if (i == 0 && string.Equals(cur.Name.LocalName, segments[i], StringComparison.Ordinal))
+                    continue; // первый сегмент совпал с корнем — остаёмся на корне
+                cur = cur.Element(segments[i]);
+            }
+            return cur;
+        }
+
+        private static double ResolveSource(string source, PlayerPreset p) =>
+            (source ?? "NONE").Trim().ToUpperInvariant() switch
+            {
+                "LEVEL" => p.HeroLevel,
+                "OFFENCE" => p.TotalOffence,
+                "DEFENCE" => p.TotalDefence,
+                "SPELLPOWER" => p.TotalSpellpower,
+                "KNOWLEDGE" => p.TotalKnowledge,
+                _ => 0,
+            };
+
+        private static string FormatLikeOriginal(string orig, double val)
+        {
+            bool isInt = !orig.Contains('.') && !orig.Contains(',');
+            return isInt
+                ? ((long)Math.Round(val, MidpointRounding.AwayFromZero)).ToString(CultureInfo.InvariantCulture)
+                : val.ToString("0.######", CultureInfo.InvariantCulture);
+        }
+
+        private static void SetHrefChild(XElement root, string childName, string href)
+        {
+            var el = root.Element(childName);
+            if (el == null)
+            {
+                el = new XElement(childName);
+                root.Add(el);
+            }
+            el.SetAttributeValue("href", href);
+        }
+
+        private static void AddXdbEntry(ZipArchive zip, string entryPath, XDocument doc, DateTime date)
+        {
+            var entry = zip.CreateEntry(entryPath.TrimStart('/'), CompressionLevel.Optimal);
+            entry.LastWriteTime = date;
+            using var stream = entry.Open();
+            var settings = new System.Xml.XmlWriterSettings
+            {
+                Encoding = new UTF8Encoding(false), // UTF-8 без BOM, как у остальных записей
+                Indent = false,
+                OmitXmlDeclaration = false,
+            };
+            using var xw = System.Xml.XmlWriter.Create(stream, settings);
+            doc.Save(xw);
         }
 
         private static void AddEntry(ZipArchive zip, string entryName, string content)
