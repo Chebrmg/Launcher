@@ -323,6 +323,9 @@ namespace Launcher
                 string textPak = Path.Combine(dataPath, "universe_mod_texts_ru.pak");
                 string mapFile = Path.Combine(mapsPath, "FRFB_UNIVERSE.h5m");
 
+                string duelsPak = Path.Combine(dataPath, "Duels.pak");
+                string duelTextsPak = Path.Combine(dataPath, "duel_texts.pak");
+
                 if (!IsPatched(universePak))
                     UpdateZipDate(universePak);
 
@@ -331,6 +334,12 @@ namespace Launcher
 
                 if (!IsPatched(mapFile))
                     UpdateZipDate(mapFile);
+
+                if (!IsPatched(duelsPak))
+                    UpdateZipDate(duelsPak);
+
+                if (!IsPatched(duelTextsPak))
+                    UpdateZipDate(duelTextsPak);
 
                 // Если режим мода
                 if (useMod)
