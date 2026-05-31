@@ -60,6 +60,14 @@ namespace Launcher
             Total += amount;
             Changed?.Invoke();
         }
+
+        // Отменить ранее выданное золото (напр. при снятии кастомного артефакта).
+        public void Ungrant(int amount)
+        {
+            if (amount == 0) return;
+            Total -= amount;
+            Changed?.Invoke();
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -270,6 +278,7 @@ namespace Launcher
                 var c1 = parser.ParseCreatures(new List<string> { _faction1 });
                 var c2 = parser.ParseCreatures(new List<string> { _faction2 });
                 var artifacts = parser.ParseArtifacts();
+                PresetGenerator.ApplyArtifactDisplay(parser, artifacts);
                 var skills = parser.ParseSkills();
                 PresetGenerator.ApplyPerkDisplay(parser, skills);
                 var heroClasses = parser.ParseHeroClasses();
@@ -598,12 +607,15 @@ namespace Launcher
             var perks1 = _parser != null ? PresetGenerator.GetHeroPerks(_parser, hero1.InternalName) : null;
             var perks2 = _parser != null ? PresetGenerator.GetHeroPerks(_parser, hero2.InternalName) : null;
 
+            var customArts1 = _parser != null ? PresetGenerator.GetHeroArtifacts(_parser, hero1.InternalName) : null;
+            var customArts2 = _parser != null ? PresetGenerator.GetHeroArtifacts(_parser, hero2.InternalName) : null;
+
             var armyTab1 = new ArmyPurchaseTab(tabArmy1, creatures1, goldState1);
-            var artTab1  = new ArtifactTab(tabArt1, artifacts, goldState1);
+            var artTab1  = new ArtifactTab(tabArt1, artifacts, goldState1, customArts1);
             var lvlTab1  = new LevelingTab(tabLvl1, hero1, _allSkills, hci1, goldState1, perks1);
             var spellTab1 = new SpellTab(tabSpells1, _allSpells, _faction1, hero1.HeroClass, goldState1);
             var armyTab2 = new ArmyPurchaseTab(tabArmy2, creatures2, goldState2);
-            var artTab2  = new ArtifactTab(tabArt2, artifacts, goldState2);
+            var artTab2  = new ArtifactTab(tabArt2, artifacts, goldState2, customArts2);
             var lvlTab2  = new LevelingTab(tabLvl2, hero2, _allSkills, hci2, goldState2, perks2);
             var spellTab2 = new SpellTab(tabSpells2, _allSpells, _faction2, hero2.HeroClass, goldState2);
 
@@ -641,7 +653,7 @@ namespace Launcher
                 try
                 {
                     string path = PresetGenerator.Generate(userModsDir, preset1, preset2,
-                        _faction1, _faction2, _parser);
+                        _faction1, _faction2, _parser, _allSpells);
 
                     MessageBox.Show($"Пресет сохранён:\n{path}", "Готов!",
                         MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1367,6 +1379,7 @@ namespace Launcher
         private readonly TabPage _tab;
         private readonly GoldState _gold;
         private readonly List<ArtifactInfo> _allArtifacts;
+        private readonly List<CustomArtifact>? _customArtifacts;
         private readonly Random _rng = new();
         private const int RerollCost = 5000;
 
@@ -1411,11 +1424,13 @@ namespace Launcher
         private Panel _shopItemsContainer = null!;  // контейнер только для 6 карточек
         private Label _goldLabel = null!;
 
-        public ArtifactTab(TabPage tab, List<ArtifactInfo> allArtifacts, GoldState gold)
+        public ArtifactTab(TabPage tab, List<ArtifactInfo> allArtifacts, GoldState gold,
+            List<CustomArtifact>? customArtifacts = null)
         {
             _tab = tab;
             _gold = gold;
             _allArtifacts = allArtifacts;
+            _customArtifacts = customArtifacts;
             foreach (var slot in SlotNames) _equipped[slot] = null;
 
             BuildUI();
@@ -1661,9 +1676,16 @@ namespace Launcher
             }
 
             var old = _equipped[slotName];
-            if (old != null) _gold.Refund(old.CostOfGold);
+            if (old != null)
+            {
+                _gold.Refund(old.CostOfGold);
+                int og = CustomGold(old);
+                if (og != 0) _gold.Ungrant(og);
+            }
 
             _equipped[slotName] = art;
+            int ng = CustomGold(art);
+            if (ng != 0) _gold.Grant(ng);
             UpdateSlotIcons();
         }
 
@@ -1673,8 +1695,15 @@ namespace Launcher
             if (old == null) return;
             _equipped[slot] = null;
             _gold.Refund(old.CostOfGold);
+            int og = CustomGold(old);
+            if (og != 0) _gold.Ungrant(og);
             UpdateSlotIcons();
         }
+
+        // Бонусное золото лаунчера от кастомного артефакта (0, если не кастомный).
+        private int CustomGold(ArtifactInfo art) =>
+            _customArtifacts?.FirstOrDefault(c =>
+                string.Equals(c.Id, art.Id, StringComparison.OrdinalIgnoreCase))?.Gold ?? 0;
 
         private void UpdateSlotIcons()
         {
