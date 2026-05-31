@@ -600,11 +600,11 @@ namespace Launcher
 
             var armyTab1 = new ArmyPurchaseTab(tabArmy1, creatures1, goldState1);
             var artTab1  = new ArtifactTab(tabArt1, artifacts, goldState1);
-            var lvlTab1  = new LevelingTab(tabLvl1, hero1, _allSkills, hci1, goldState1, perks1, armyTab1);
+            var lvlTab1  = new LevelingTab(tabLvl1, hero1, _allSkills, hci1, goldState1, perks1);
             var spellTab1 = new SpellTab(tabSpells1, _allSpells, _faction1, hero1.HeroClass, goldState1);
             var armyTab2 = new ArmyPurchaseTab(tabArmy2, creatures2, goldState2);
             var artTab2  = new ArtifactTab(tabArt2, artifacts, goldState2);
-            var lvlTab2  = new LevelingTab(tabLvl2, hero2, _allSkills, hci2, goldState2, perks2, armyTab2);
+            var lvlTab2  = new LevelingTab(tabLvl2, hero2, _allSkills, hci2, goldState2, perks2);
             var spellTab2 = new SpellTab(tabSpells2, _allSpells, _faction2, hero2.HeroClass, goldState2);
 
             _tabs.TabPages.Add(tabArmy1);
@@ -690,28 +690,6 @@ namespace Launcher
         private readonly ArmySlot[] _slots = new ArmySlot[7];
 
         public ArmySlot[] Slots => _slots;
-
-        // Бонус армии от кастомного перка: для занятых слотов нужного тира меняет Count.
-        // amount уже посчитан (base + coef*source); useGrowth → умножаем на WeeklyGrowth юнита слота.
-        public void ApplyPerkArmyBonus(int tier, string operation, double amount, bool useGrowth)
-        {
-            string op = (operation ?? "ADD").Trim().ToUpperInvariant();
-            for (int i = 0; i < _slots.Length; i++)
-            {
-                var slot = _slots[i];
-                if (slot.Creature == null || slot.Creature.CreatureTier != tier) continue;
-
-                double a = useGrowth ? amount * slot.Creature.WeeklyGrowth : amount;
-                int newCount = op switch
-                {
-                    "MULT" => (int)Math.Round(slot.Count * a, MidpointRounding.AwayFromZero),
-                    "SET"  => (int)Math.Round(a, MidpointRounding.AwayFromZero),
-                    _      => slot.Count + (int)Math.Round(a, MidpointRounding.AwayFromZero),
-                };
-                slot.Count = Math.Max(0, newCount);
-                UpdateSlotDisplay(i);
-            }
-        }
 
         // ── кеши элементов магазина ──────────────────────────────────────────────
         // ключ = CreatureInfo.Id
@@ -1954,7 +1932,6 @@ namespace Launcher
         private readonly HeroClassInfo? _heroClassInfo;
         private readonly GoldState _gold;
         private readonly List<HeroPerk>? _customPerks;
-        private readonly ArmyPurchaseTab? _armyTab;
         private readonly Random _rng = new();
 
         private int _heroLevel = 1;
@@ -1985,7 +1962,7 @@ namespace Launcher
         private const int MaxLevel = 20;
 
         public LevelingTab(TabPage tab, HeroInfo hero, List<SkillInfo> allSkills, HeroClassInfo? heroClassInfo, GoldState gold,
-            List<HeroPerk>? customPerks = null, ArmyPurchaseTab? armyTab = null)
+            List<HeroPerk>? customPerks = null)
         {
             _tab = tab;
             _hero = hero;
@@ -1993,7 +1970,6 @@ namespace Launcher
             _heroClassInfo = heroClassInfo;
             _gold = gold;
             _customPerks = customPerks;
-            _armyTab = armyTab;
 
             InitializeHeroState();
             BuildUI();
@@ -2438,6 +2414,8 @@ namespace Launcher
         }
 
         // Применяет эффекты кастомного перка (из duel_settings.json) в момент его взятия.
+        // Золото и статы — при взятии перка; армия применяется при сборке дуэль-пресета
+        // (PresetGenerator.ApplyPerkArmy), поэтому здесь не трогается.
         private void ApplyCustomPerk(string perkId)
         {
             if (_customPerks == null) return;
@@ -2457,16 +2435,6 @@ namespace Launcher
                     ApplyStatMod(sm.Stat, (sm.Operation ?? "ADD").Trim().ToUpperInvariant(), amount);
                 }
                 UpdateStatsLabel();
-            }
-
-            // Армия по тирам
-            if (perk.Army != null && _armyTab != null)
-            {
-                foreach (var am in perk.Army)
-                {
-                    double amount = am.Base + am.Coef * PerkSource(am.Source);
-                    _armyTab.ApplyPerkArmyBonus(am.Tier, am.Operation, amount, am.UseGrowth);
-                }
             }
         }
 

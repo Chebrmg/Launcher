@@ -29,7 +29,7 @@ namespace Launcher
 
     // Кастомный перк мода: привязан к существующему перку из Skills.xdb (PerkId).
     // Описание грузится из txt при парсинге (показ в лаунчере) + переопределяется в копии Skills.xdb.
-    // Эффекты применяются при взятии перка на лвлапе.
+    // Золото и статы применяются при взятии перка на лвлапе; армия — при сборке дуэль-пресета.
     public class HeroPerk
     {
         public string PerkId { get; set; } = "";
@@ -143,6 +143,13 @@ namespace Launcher
             string town1 = FactionToTown.TryGetValue(faction1, out var t1) ? t1 : "TOWN_HEAVEN";
             string town2 = FactionToTown.TryGetValue(faction2, out var t2) ? t2 : "TOWN_INFERNO";
 
+            // Армейские перки применяются к копии армии при сборке пресета (не при взятии).
+            if (vfs != null)
+            {
+                try { ApplyPerkArmy(vfs, p1); ApplyPerkArmy(vfs, p2); }
+                catch { /* армейские перки не критичны для формирования пресета */ }
+            }
+
             AddEntry(zip, "UI/MPDMLobby/presets.(DuelPresets).xdb", BuildPresetsXdb());
             AddEntry(zip, "Maps/DuelMode/PresetMap/map.xdb", BuildMapXdb(town1, town2));
             AddEntry(zip, "Maps/DuelMode/Heroes/AdvMapHero1.xdb", BuildHeroXdb(p1));
@@ -169,6 +176,62 @@ namespace Launcher
             }
             catch { return null; }
         }
+
+        // Применяет армейские перки взятого героя к копии его армии при сборке пресета.
+        // Источник чисел (LEVEL/характеристики) берётся из финального состояния пресета.
+        // Слоты копируются — исходная армия не мутируется (повторная генерация не складывает бонусы).
+        private static void ApplyPerkArmy(GameDataParser vfs, PlayerPreset p)
+        {
+            if (p?.Hero == null || p.ArmySlots.Length == 0) return;
+            var perks = GetHeroPerks(vfs, p.Hero.InternalName);
+            if (perks == null || perks.Count == 0) return;
+
+            var taken = new HashSet<string>(p.Perks ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+            var active = perks.Where(pk => !string.IsNullOrWhiteSpace(pk.PerkId)
+                && pk.Army != null && pk.Army.Count > 0
+                && taken.Contains(pk.PerkId)).ToList();
+            if (active.Count == 0) return;
+
+            var slots = p.ArmySlots
+                .Select(s => s == null ? null : new ArmySlot { Creature = s.Creature, Count = s.Count })
+                .ToArray();
+
+            foreach (var perk in active)
+            {
+                foreach (var am in perk.Army!)
+                {
+                    double amount = am.Base + am.Coef * PerkSourceValue(am.Source, p);
+                    string op = (am.Operation ?? "ADD").Trim().ToUpperInvariant();
+                    for (int i = 0; i < slots.Length; i++)
+                    {
+                        var slot = slots[i];
+                        if (slot?.Creature == null || slot.Creature.CreatureTier != am.Tier) continue;
+
+                        double a = am.UseGrowth ? amount * slot.Creature.WeeklyGrowth : amount;
+                        int newCount = op switch
+                        {
+                            "MULT" => (int)Math.Round(slot.Count * a, MidpointRounding.AwayFromZero),
+                            "SET"  => (int)Math.Round(a, MidpointRounding.AwayFromZero),
+                            _      => slot.Count + (int)Math.Round(a, MidpointRounding.AwayFromZero),
+                        };
+                        slot.Count = Math.Max(0, newCount);
+                    }
+                }
+            }
+
+            p.ArmySlots = slots!;
+        }
+
+        private static double PerkSourceValue(string source, PlayerPreset p) =>
+            (source ?? "NONE").Trim().ToUpperInvariant() switch
+            {
+                "LEVEL" => p.HeroLevel,
+                "OFFENCE" => p.TotalOffence,
+                "DEFENCE" => p.TotalDefence,
+                "SPELLPOWER" => p.TotalSpellpower,
+                "KNOWLEDGE" => p.TotalKnowledge,
+                _ => 0,
+            };
 
         // Подменяет имя/описание спеца у распарсенных героев, чтобы окно выбора героя
         // сразу показывало модовую специализацию из duel_settings.json.
