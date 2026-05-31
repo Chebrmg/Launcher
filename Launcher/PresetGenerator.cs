@@ -150,6 +150,10 @@ namespace Launcher
                 catch { /* армейские перки не критичны для формирования пресета */ }
             }
 
+            // Гейтинг заклинаний/рун по навыкам героя (исходя из взятых навыков).
+            try { ApplySpellSkillGating(p1); ApplySpellSkillGating(p2); }
+            catch { /* гейтинг не критичен для формирования пресета */ }
+
             AddEntry(zip, "UI/MPDMLobby/presets.(DuelPresets).xdb", BuildPresetsXdb());
             AddEntry(zip, "Maps/DuelMode/PresetMap/map.xdb", BuildMapXdb(town1, town2));
             AddEntry(zip, "Maps/DuelMode/Heroes/AdvMapHero1.xdb", BuildHeroXdb(p1));
@@ -232,6 +236,71 @@ namespace Launcher
                 "KNOWLEDGE" => p.TotalKnowledge,
                 _ => 0,
             };
+
+        // Школа заклинания → навык школы магии (mastery: BASIC=0, ADVANCED=1, EXPERT=2).
+        private static readonly Dictionary<string, string> SchoolSkill = new(StringComparer.Ordinal)
+        {
+            { "MAGIC_SCHOOL_LIGHT",       "HERO_SKILL_LIGHT_MAGIC" },
+            { "MAGIC_SCHOOL_DARK",        "HERO_SKILL_DARK_MAGIC" },
+            { "MAGIC_SCHOOL_DESTRUCTIVE", "HERO_SKILL_DESTRUCTIVE_MAGIC" },
+            { "MAGIC_SCHOOL_SUMMONING",   "HERO_SKILL_SUMMONING_MAGIC" },
+        };
+
+        private const string WisdomSkillId = "HERO_SKILL_WISDOM";
+
+        // Отсекает заклинания/руны, требующие навыков, которых у героя нет.
+        //   Заклинания: 1–2 всегда; 3 — школа Basic+ ИЛИ Wisdom;
+        //               4 — школа Advanced+ ИЛИ (Wisdom и герой 20 лвл); 5 — школа Expert.
+        //   Руны:       1–2 всегда; 3–4 — расовый Advanced+; 5 — расовый Expert.
+        // Кличи орков и прочие не-боевые школы не гейтятся.
+        private static void ApplySpellSkillGating(PlayerPreset p)
+        {
+            if (p == null) return;
+            var skills = p.Skills ?? new List<(string SkillId, int Mastery)>();
+
+            int SchoolMastery(string magicSchool)
+            {
+                if (!SchoolSkill.TryGetValue(magicSchool ?? "", out var skillId)) return -1;
+                int best = -1;
+                foreach (var (sid, m) in skills)
+                    if (string.Equals(sid, skillId, StringComparison.OrdinalIgnoreCase) && m > best) best = m;
+                return best;
+            }
+
+            bool hasWisdom = skills.Any(s =>
+                string.Equals(s.SkillId, WisdomSkillId, StringComparison.OrdinalIgnoreCase));
+
+            bool SpellAllowed(SpellInfo sp)
+            {
+                if (sp == null) return false;
+                // Гейтим только 4 боевые школы; кличи/прочее — без ограничений.
+                if (!SchoolSkill.ContainsKey(sp.MagicSchool)) return true;
+                if (sp.Level <= 2) return true;
+                int sm = SchoolMastery(sp.MagicSchool);
+                return sp.Level switch
+                {
+                    3 => sm >= 0 || hasWisdom,
+                    4 => sm >= 1 || (hasWisdom && p.HeroLevel >= 20),
+                    5 => sm >= 2,
+                    _ => true,
+                };
+            }
+
+            bool RuneAllowed(SpellInfo rn)
+            {
+                if (rn == null) return false;
+                if (rn.Level <= 2) return true;
+                return rn.Level switch
+                {
+                    3 or 4 => p.RacialMastery >= 1,
+                    5 => p.RacialMastery >= 2,
+                    _ => true,
+                };
+            }
+
+            if (p.Spells != null) p.Spells = p.Spells.Where(SpellAllowed).ToList();
+            if (p.Runes != null) p.Runes = p.Runes.Where(RuneAllowed).ToList();
+        }
 
         // Подменяет имя/описание спеца у распарсенных героев, чтобы окно выбора героя
         // сразу показывало модовую специализацию из duel_settings.json.
