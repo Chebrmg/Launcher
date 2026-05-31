@@ -52,6 +52,14 @@ namespace Launcher
             Spent = Math.Max(0, Spent - amount);
             Changed?.Invoke();
         }
+
+        // Выдать игроку дополнительное золото (напр. за взятие кастомного перка).
+        public void Grant(int amount)
+        {
+            if (amount == 0) return;
+            Total += amount;
+            Changed?.Invoke();
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -263,6 +271,7 @@ namespace Launcher
                 var c2 = parser.ParseCreatures(new List<string> { _faction2 });
                 var artifacts = parser.ParseArtifacts();
                 var skills = parser.ParseSkills();
+                PresetGenerator.ApplyPerkDisplay(parser, skills);
                 var heroClasses = parser.ParseHeroClasses();
                 var heroes = parser.ParseHeroes();
                 PresetGenerator.ApplyHeroSpecDisplay(parser, heroes);
@@ -586,13 +595,16 @@ namespace Launcher
             var hci1 = _heroClasses.FirstOrDefault(c => c.Id == hero1.HeroClass);
             var hci2 = _heroClasses.FirstOrDefault(c => c.Id == hero2.HeroClass);
 
+            var perks1 = _parser != null ? PresetGenerator.GetHeroPerks(_parser, hero1.InternalName) : null;
+            var perks2 = _parser != null ? PresetGenerator.GetHeroPerks(_parser, hero2.InternalName) : null;
+
             var armyTab1 = new ArmyPurchaseTab(tabArmy1, creatures1, goldState1);
             var artTab1  = new ArtifactTab(tabArt1, artifacts, goldState1);
-            var lvlTab1  = new LevelingTab(tabLvl1, hero1, _allSkills, hci1, goldState1);
+            var lvlTab1  = new LevelingTab(tabLvl1, hero1, _allSkills, hci1, goldState1, perks1, armyTab1);
             var spellTab1 = new SpellTab(tabSpells1, _allSpells, _faction1, hero1.HeroClass, goldState1);
             var armyTab2 = new ArmyPurchaseTab(tabArmy2, creatures2, goldState2);
             var artTab2  = new ArtifactTab(tabArt2, artifacts, goldState2);
-            var lvlTab2  = new LevelingTab(tabLvl2, hero2, _allSkills, hci2, goldState2);
+            var lvlTab2  = new LevelingTab(tabLvl2, hero2, _allSkills, hci2, goldState2, perks2, armyTab2);
             var spellTab2 = new SpellTab(tabSpells2, _allSpells, _faction2, hero2.HeroClass, goldState2);
 
             _tabs.TabPages.Add(tabArmy1);
@@ -678,6 +690,28 @@ namespace Launcher
         private readonly ArmySlot[] _slots = new ArmySlot[7];
 
         public ArmySlot[] Slots => _slots;
+
+        // Бонус армии от кастомного перка: для занятых слотов нужного тира меняет Count.
+        // amount уже посчитан (base + coef*source); useGrowth → умножаем на WeeklyGrowth юнита слота.
+        public void ApplyPerkArmyBonus(int tier, string operation, double amount, bool useGrowth)
+        {
+            string op = (operation ?? "ADD").Trim().ToUpperInvariant();
+            for (int i = 0; i < _slots.Length; i++)
+            {
+                var slot = _slots[i];
+                if (slot.Creature == null || slot.Creature.CreatureTier != tier) continue;
+
+                double a = useGrowth ? amount * slot.Creature.WeeklyGrowth : amount;
+                int newCount = op switch
+                {
+                    "MULT" => (int)Math.Round(slot.Count * a, MidpointRounding.AwayFromZero),
+                    "SET"  => (int)Math.Round(a, MidpointRounding.AwayFromZero),
+                    _      => slot.Count + (int)Math.Round(a, MidpointRounding.AwayFromZero),
+                };
+                slot.Count = Math.Max(0, newCount);
+                UpdateSlotDisplay(i);
+            }
+        }
 
         // ── кеши элементов магазина ──────────────────────────────────────────────
         // ключ = CreatureInfo.Id
@@ -1919,6 +1953,8 @@ namespace Launcher
         private readonly List<SkillInfo> _allSkills;
         private readonly HeroClassInfo? _heroClassInfo;
         private readonly GoldState _gold;
+        private readonly List<HeroPerk>? _customPerks;
+        private readonly ArmyPurchaseTab? _armyTab;
         private readonly Random _rng = new();
 
         private int _heroLevel = 1;
@@ -1948,13 +1984,16 @@ namespace Launcher
         private const int MaxNonRacialSkills = 5;
         private const int MaxLevel = 20;
 
-        public LevelingTab(TabPage tab, HeroInfo hero, List<SkillInfo> allSkills, HeroClassInfo? heroClassInfo, GoldState gold)
+        public LevelingTab(TabPage tab, HeroInfo hero, List<SkillInfo> allSkills, HeroClassInfo? heroClassInfo, GoldState gold,
+            List<HeroPerk>? customPerks = null, ArmyPurchaseTab? armyTab = null)
         {
             _tab = tab;
             _hero = hero;
             _allSkills = allSkills;
             _heroClassInfo = heroClassInfo;
             _gold = gold;
+            _customPerks = customPerks;
+            _armyTab = armyTab;
 
             InitializeHeroState();
             BuildUI();
@@ -2393,7 +2432,86 @@ namespace Launcher
                     break;
                 case LevelUpType.Perk:
                     _takenPerks.Add(option.PerkId);
+                    ApplyCustomPerk(option.PerkId);
                     break;
+            }
+        }
+
+        // Применяет эффекты кастомного перка (из duel_settings.json) в момент его взятия.
+        private void ApplyCustomPerk(string perkId)
+        {
+            if (_customPerks == null) return;
+            var perk = _customPerks.FirstOrDefault(p =>
+                string.Equals(p.PerkId, perkId, StringComparison.OrdinalIgnoreCase));
+            if (perk == null) return;
+
+            // Золото
+            if (perk.Gold != 0) _gold.Grant(perk.Gold);
+
+            // Статы героя
+            if (perk.Stats != null)
+            {
+                foreach (var sm in perk.Stats)
+                {
+                    double amount = sm.Base + sm.Coef * PerkSource(sm.Source);
+                    ApplyStatMod(sm.Stat, (sm.Operation ?? "ADD").Trim().ToUpperInvariant(), amount);
+                }
+                UpdateStatsLabel();
+            }
+
+            // Армия по тирам
+            if (perk.Army != null && _armyTab != null)
+            {
+                foreach (var am in perk.Army)
+                {
+                    double amount = am.Base + am.Coef * PerkSource(am.Source);
+                    _armyTab.ApplyPerkArmyBonus(am.Tier, am.Operation, amount, am.UseGrowth);
+                }
+            }
+        }
+
+        private double PerkSource(string source) => (source ?? "NONE").Trim().ToUpperInvariant() switch
+        {
+            "LEVEL" => _heroLevel,
+            "OFFENCE" => TotalOffence,
+            "DEFENCE" => TotalDefence,
+            "SPELLPOWER" => TotalSpellpower,
+            "KNOWLEDGE" => TotalKnowledge,
+            _ => 0,
+        };
+
+        private void ApplyStatMod(string stat, string op, double amount)
+        {
+            int baseVal = (stat ?? "").Trim().ToUpperInvariant() switch
+            {
+                "OFFENCE" => _hero.Offence,
+                "DEFENCE" => _hero.Defence,
+                "SPELLPOWER" => _hero.Spellpower,
+                "KNOWLEDGE" => _hero.Knowledge,
+                _ => 0,
+            };
+            int curBonus = (stat ?? "").Trim().ToUpperInvariant() switch
+            {
+                "OFFENCE" => _bonusOffence,
+                "DEFENCE" => _bonusDefence,
+                "SPELLPOWER" => _bonusSpellpower,
+                "KNOWLEDGE" => _bonusKnowledge,
+                _ => 0,
+            };
+            int total = baseVal + curBonus;
+            int newTotal = op switch
+            {
+                "MULT" => (int)Math.Round(total * amount, MidpointRounding.AwayFromZero),
+                "SET"  => (int)Math.Round(amount, MidpointRounding.AwayFromZero),
+                _      => total + (int)Math.Round(amount, MidpointRounding.AwayFromZero),
+            };
+            int newBonus = newTotal - baseVal;
+            switch ((stat ?? "").Trim().ToUpperInvariant())
+            {
+                case "OFFENCE": _bonusOffence = newBonus; break;
+                case "DEFENCE": _bonusDefence = newBonus; break;
+                case "SPELLPOWER": _bonusSpellpower = newBonus; break;
+                case "KNOWLEDGE": _bonusKnowledge = newBonus; break;
             }
         }
 
