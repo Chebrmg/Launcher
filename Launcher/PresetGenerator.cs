@@ -26,6 +26,45 @@ namespace Launcher
         public List<SpecModification>? Modifications { get; set; }
         public List<HeroPerk>? Perks { get; set; }
         public List<AbilityMod>? Abilities { get; set; }
+        public List<SpellGrant>? GrantSpells { get; set; }      // выдача заклинаний герою (всегда, если герой выбран)
+        public List<CustomArtifact>? Artifacts { get; set; }    // кастомные арты героя
+    }
+
+    // Выдача заклинаний по тегам school/level.
+    //   ALL — все заклинания под теги; RANDOM — Count случайных под теги; SPECIFIC — конкретный SpellId.
+    //   School: MAGIC_SCHOOL_* или ANY/пусто (любая школа). Level: 1..5 или 0 (любой).
+    public class SpellGrant
+    {
+        public string Mode { get; set; } = "SPECIFIC";   // ALL | RANDOM | SPECIFIC
+        public string? School { get; set; }              // MAGIC_SCHOOL_* | ANY
+        public int Level { get; set; }                   // 1..5 | 0 = любой
+        public int Count { get; set; } = 1;              // для RANDOM
+        public string? SpellId { get; set; }             // для SPECIFIC (Id или GameId)
+    }
+
+    // Кастомный артефакт мода: привязан к существующему ID артефакта из Artifacts.xdb.
+    // Имя/описание грузятся при парсинге (показ в магазине/слоте) + override в Artifacts.xdb.
+    // Золото — при экипировке; армия и заклинания — при сборке пресета; 6 статов — SET в Artifacts.xdb.
+    public class CustomArtifact
+    {
+        public string Id { get; set; } = "";
+        public string? NameFileRef { get; set; }
+        public string? DescFileRef { get; set; }
+        public ArtifactStats? Stats { get; set; }        // 6 статов HeroStatsModif (SET) в копии Artifacts.xdb
+        public List<PerkArmyMod>? Army { get; set; }     // армия при сборке (если арт надет)
+        public List<SpellGrant>? GrantSpells { get; set; } // заклинания при сборке (если арт надет)
+        public int Gold { get; set; }                    // +внутреннее золото лаунчера при экипировке
+    }
+
+    // 6 статов артефакта (HeroStatsModif). null = не менять.
+    public class ArtifactStats
+    {
+        public int? Attack { get; set; }
+        public int? Defence { get; set; }
+        public int? Knowledge { get; set; }
+        public int? SpellPower { get; set; }
+        public int? Morale { get; set; }
+        public int? Luck { get; set; }
     }
 
     // Добавление/удаление абилок (<Abilities><Item>...</Item></Abilities>) в копии xdb юнита.
@@ -47,6 +86,7 @@ namespace Launcher
         public int Gold { get; set; }                 // +внутреннее золото лаунчера при взятии
         public List<PerkStatMod>? Stats { get; set; }
         public List<PerkArmyMod>? Army { get; set; }
+        public List<SpellGrant>? GrantSpells { get; set; } // выдача заклинаний при сборке (если перк взят)
     }
 
     // Прибавка к стату героя: amount = base + coef*source; ADD/MULT/SET.
@@ -139,7 +179,8 @@ namespace Launcher
         }
 
         public static string Generate(string outputDir, PlayerPreset p1, PlayerPreset p2,
-            string faction1, string faction2, GameDataParser? vfs = null)
+            string faction1, string faction2, GameDataParser? vfs = null,
+            IReadOnlyList<SpellInfo>? spellPool = null)
         {
             string fileName = "ER_presets_ru.h5u";
             string outputPath = Path.Combine(outputDir, fileName);
@@ -152,16 +193,25 @@ namespace Launcher
             string town1 = FactionToTown.TryGetValue(faction1, out var t1) ? t1 : "TOWN_HEAVEN";
             string town2 = FactionToTown.TryGetValue(faction2, out var t2) ? t2 : "TOWN_INFERNO";
 
-            // Армейские перки применяются к копии армии при сборке пресета (не при взятии).
+            // Армейские бонусы (перки + кастомные арты) применяются к копии армии при сборке пресета.
             if (vfs != null)
             {
                 try { ApplyPerkArmy(vfs, p1); ApplyPerkArmy(vfs, p2); }
                 catch { /* армейские перки не критичны для формирования пресета */ }
+                try { ApplyArtifactArmy(vfs, p1); ApplyArtifactArmy(vfs, p2); }
+                catch { /* армейские арты не критичны для формирования пресета */ }
             }
 
             // Гейтинг заклинаний/рун по навыкам героя (исходя из взятых навыков).
             try { ApplySpellSkillGating(p1); ApplySpellSkillGating(p2); }
             catch { /* гейтинг не критичен для формирования пресета */ }
+
+            // Выдача заклинаний (спека/перки/арты) — после гейтинга, без проверки навыков.
+            if (vfs != null)
+            {
+                try { ApplyGrantSpells(vfs, p1, spellPool); ApplyGrantSpells(vfs, p2, spellPool); }
+                catch { /* выдача заклинаний не критична для формирования пресета */ }
+            }
 
             AddEntry(zip, "UI/MPDMLobby/presets.(DuelPresets).xdb", BuildPresetsXdb());
             AddEntry(zip, "Maps/DuelMode/PresetMap/map.xdb", BuildMapXdb(town1, town2));
@@ -210,29 +260,136 @@ namespace Launcher
                 .ToArray();
 
             foreach (var perk in active)
-            {
                 foreach (var am in perk.Army!)
-                {
-                    double amount = am.Base + am.Coef * PerkSourceValue(am.Source, p);
-                    string op = (am.Operation ?? "ADD").Trim().ToUpperInvariant();
-                    for (int i = 0; i < slots.Length; i++)
-                    {
-                        var slot = slots[i];
-                        if (slot?.Creature == null || slot.Creature.CreatureTier != am.Tier) continue;
-
-                        double a = am.UseGrowth ? amount * slot.Creature.WeeklyGrowth : amount;
-                        int newCount = op switch
-                        {
-                            "MULT" => (int)Math.Round(slot.Count * a, MidpointRounding.AwayFromZero),
-                            "SET"  => (int)Math.Round(a, MidpointRounding.AwayFromZero),
-                            _      => slot.Count + (int)Math.Round(a, MidpointRounding.AwayFromZero),
-                        };
-                        slot.Count = Math.Max(0, newCount);
-                    }
-                }
-            }
+                    ApplyArmyMod(slots, am, p);
 
             p.ArmySlots = slots!;
+        }
+
+        // Армейские бонусы от надетых кастомных артефактов (аналогично ApplyPerkArmy).
+        private static void ApplyArtifactArmy(GameDataParser vfs, PlayerPreset p)
+        {
+            if (p?.Hero == null || p.ArmySlots.Length == 0) return;
+            var arts = GetHeroArtifacts(vfs, p.Hero.InternalName);
+            if (arts == null || arts.Count == 0) return;
+
+            var equipped = new HashSet<string>(
+                p.EquippedArtifacts.Values.Where(a => a != null).Select(a => a!.Id),
+                StringComparer.OrdinalIgnoreCase);
+            var active = arts.Where(a => !string.IsNullOrWhiteSpace(a.Id)
+                && a.Army != null && a.Army.Count > 0
+                && equipped.Contains(a.Id)).ToList();
+            if (active.Count == 0) return;
+
+            var slots = p.ArmySlots
+                .Select(s => s == null ? null : new ArmySlot { Creature = s.Creature, Count = s.Count })
+                .ToArray();
+
+            foreach (var art in active)
+                foreach (var am in art.Army!)
+                    ApplyArmyMod(slots, am, p);
+
+            p.ArmySlots = slots!;
+        }
+
+        // Применяет один армейский модификатор к копии слотов: amount = base + coef*source [*growth], ADD/MULT/SET.
+        private static void ApplyArmyMod(ArmySlot?[] slots, PerkArmyMod am, PlayerPreset p)
+        {
+            double amount = am.Base + am.Coef * PerkSourceValue(am.Source, p);
+            string op = (am.Operation ?? "ADD").Trim().ToUpperInvariant();
+            for (int i = 0; i < slots.Length; i++)
+            {
+                var slot = slots[i];
+                if (slot?.Creature == null || slot.Creature.CreatureTier != am.Tier) continue;
+
+                double a = am.UseGrowth ? amount * slot.Creature.WeeklyGrowth : amount;
+                int newCount = op switch
+                {
+                    "MULT" => (int)Math.Round(slot.Count * a, MidpointRounding.AwayFromZero),
+                    "SET"  => (int)Math.Round(a, MidpointRounding.AwayFromZero),
+                    _      => slot.Count + (int)Math.Round(a, MidpointRounding.AwayFromZero),
+                };
+                slot.Count = Math.Max(0, newCount);
+            }
+        }
+
+        private static readonly Random GrantRng = new();
+
+        // Выдача заклинаний герою при сборке пресета: спека героя + взятые перки + надетые кастомные арты.
+        // Без проверки навыков; дубли (по GameId/Id) пропускаются.
+        private static void ApplyGrantSpells(GameDataParser vfs, PlayerPreset p, IReadOnlyList<SpellInfo>? pool)
+        {
+            if (p?.Hero == null || pool == null || pool.Count == 0) return;
+            var cfg = LoadSettings(vfs);
+            var spec = cfg?.Heroes?.FirstOrDefault(h =>
+                string.Equals(h.InternalName, p.Hero.InternalName, StringComparison.OrdinalIgnoreCase));
+            if (spec == null) return;
+
+            var grants = new List<SpellGrant>();
+            if (spec.GrantSpells != null) grants.AddRange(spec.GrantSpells);
+
+            if (spec.Perks != null)
+            {
+                var taken = new HashSet<string>(p.Perks ?? new List<string>(), StringComparer.OrdinalIgnoreCase);
+                foreach (var perk in spec.Perks)
+                    if (perk.GrantSpells != null && !string.IsNullOrWhiteSpace(perk.PerkId) && taken.Contains(perk.PerkId))
+                        grants.AddRange(perk.GrantSpells);
+            }
+
+            if (spec.Artifacts != null)
+            {
+                var equipped = new HashSet<string>(
+                    p.EquippedArtifacts.Values.Where(a => a != null).Select(a => a!.Id),
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var art in spec.Artifacts)
+                    if (art.GrantSpells != null && !string.IsNullOrWhiteSpace(art.Id) && equipped.Contains(art.Id))
+                        grants.AddRange(art.GrantSpells);
+            }
+
+            if (grants.Count == 0) return;
+
+            var have = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var s in p.Spells) { if (!string.IsNullOrEmpty(s.GameId)) have.Add(s.GameId); if (!string.IsNullOrEmpty(s.Id)) have.Add(s.Id); }
+            foreach (var s in p.Runes)  { if (!string.IsNullOrEmpty(s.GameId)) have.Add(s.GameId); if (!string.IsNullOrEmpty(s.Id)) have.Add(s.Id); }
+
+            foreach (var g in grants)
+            {
+                foreach (var sp in ResolveGrant(g, pool))
+                {
+                    if (sp == null) continue;
+                    string gid = !string.IsNullOrEmpty(sp.GameId) ? sp.GameId : sp.Id;
+                    if (string.IsNullOrEmpty(gid)) continue;
+                    if (have.Contains(gid) || (!string.IsNullOrEmpty(sp.Id) && have.Contains(sp.Id))) continue;
+                    p.Spells.Add(sp);
+                    have.Add(gid);
+                    if (!string.IsNullOrEmpty(sp.Id)) have.Add(sp.Id);
+                }
+            }
+        }
+
+        // Разрешает один SpellGrant в список заклинаний из пула.
+        private static List<SpellInfo> ResolveGrant(SpellGrant g, IReadOnlyList<SpellInfo> pool)
+        {
+            string mode = (g.Mode ?? "SPECIFIC").Trim().ToUpperInvariant();
+            if (mode == "SPECIFIC")
+            {
+                if (string.IsNullOrWhiteSpace(g.SpellId)) return new List<SpellInfo>();
+                var sp = pool.FirstOrDefault(s =>
+                    string.Equals(s.GameId, g.SpellId, StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(s.Id, g.SpellId, StringComparison.OrdinalIgnoreCase));
+                return sp != null ? new List<SpellInfo> { sp } : new List<SpellInfo>();
+            }
+
+            bool anySchool = string.IsNullOrWhiteSpace(g.School)
+                || string.Equals(g.School, "ANY", StringComparison.OrdinalIgnoreCase);
+            var matches = pool.Where(s =>
+                (anySchool || string.Equals(s.MagicSchool, g.School, StringComparison.OrdinalIgnoreCase)) &&
+                (g.Level <= 0 || s.Level == g.Level)).ToList();
+
+            if (mode == "ALL") return matches;
+
+            int count = Math.Max(1, g.Count);
+            return matches.OrderBy(_ => GrantRng.Next()).Take(Math.Min(count, matches.Count)).ToList();
         }
 
         private static double PerkSourceValue(string source, PlayerPreset p) =>
@@ -347,6 +504,46 @@ namespace Launcher
             var spec = cfg?.Heroes?.FirstOrDefault(h =>
                 string.Equals(h.InternalName, internalName, StringComparison.OrdinalIgnoreCase));
             return spec?.Perks;
+        }
+
+        // Кастомные артефакты героя из конфига (или null, если героя/артов нет).
+        public static List<CustomArtifact>? GetHeroArtifacts(GameDataParser vfs, string internalName)
+        {
+            var cfg = LoadSettings(vfs);
+            var spec = cfg?.Heroes?.FirstOrDefault(h =>
+                string.Equals(h.InternalName, internalName, StringComparison.OrdinalIgnoreCase));
+            return spec?.Artifacts;
+        }
+
+        // Подменяет имя/описание у артефактов (ArtifactInfo) на тексты из duel_settings.json,
+        // чтобы при парсинге кастомный текст сразу был виден в магазине/слоте.
+        public static void ApplyArtifactDisplay(GameDataParser vfs, List<ArtifactInfo> artifacts)
+        {
+            var cfg = LoadSettings(vfs);
+            if (cfg?.Heroes == null || cfg.Heroes.Count == 0) return;
+
+            foreach (var hero in cfg.Heroes)
+            {
+                if (hero.Artifacts == null) continue;
+                foreach (var art in hero.Artifacts)
+                {
+                    if (string.IsNullOrWhiteSpace(art.Id)) continue;
+                    var ai = artifacts.FirstOrDefault(a =>
+                        string.Equals(a.Id, art.Id, StringComparison.OrdinalIgnoreCase));
+                    if (ai == null) continue;
+
+                    if (!string.IsNullOrWhiteSpace(art.NameFileRef))
+                    {
+                        var t = vfs.ReadText(art.NameFileRef!);
+                        if (!string.IsNullOrWhiteSpace(t)) ai.Name = StripTagsPublic(t!);
+                    }
+                    if (!string.IsNullOrWhiteSpace(art.DescFileRef))
+                    {
+                        var t = vfs.ReadText(art.DescFileRef!);
+                        if (!string.IsNullOrWhiteSpace(t)) ai.Description = StripTagsPublic(t!);
+                    }
+                }
+            }
         }
 
         // Подменяет имя/описание у перков (SkillInfo) на тексты из duel_settings.json,
@@ -507,6 +704,65 @@ namespace Launcher
                     if (changed) AddXdbEntry(zip, skillsPath, sdoc, fileDate);
                 }
             }
+
+            // (D) Кастомные арты → глобальная копия Artifacts.xdb (6 статов SET + name/desc override).
+            // Применяем только для надетых артов выбранных героев; изменения складываются в одну копию.
+            var artMods = new List<CustomArtifact>();
+            foreach (var (preset, spec) in selected)
+            {
+                if (spec.Artifacts == null) continue;
+                var equipped = new HashSet<string>(
+                    preset.EquippedArtifacts.Values.Where(a => a != null).Select(a => a!.Id),
+                    StringComparer.OrdinalIgnoreCase);
+                foreach (var art in spec.Artifacts)
+                    if (!string.IsNullOrWhiteSpace(art.Id) && equipped.Contains(art.Id))
+                        artMods.Add(art);
+            }
+
+            if (artMods.Count > 0)
+            {
+                const string artPath = "/GameMechanics/RefTables/Artifacts.xdb";
+                var adoc = vfs.ReadXdb(artPath);
+                if (adoc?.Root != null)
+                {
+                    var items = adoc.Root.Element("objects")?.Elements("Item") ?? adoc.Descendants("Item");
+                    var byId = items
+                        .Where(it => !string.IsNullOrEmpty(it.Element("ID")?.Value))
+                        .GroupBy(it => it.Element("ID")!.Value, StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+                    bool changed = false;
+                    foreach (var art in artMods)
+                    {
+                        if (!byId.TryGetValue(art.Id, out var item)) continue;
+                        var data = item.Element("obj") ?? item;
+                        if (!string.IsNullOrWhiteSpace(art.NameFileRef))
+                        { SetHrefChild(data, "NameFileRef", art.NameFileRef!); changed = true; }
+                        if (!string.IsNullOrWhiteSpace(art.DescFileRef))
+                        { SetHrefChild(data, "DescriptionFileRef", art.DescFileRef!); changed = true; }
+                        if (art.Stats != null)
+                        { ApplyArtifactStats(data, art.Stats); changed = true; }
+                    }
+                    if (changed) AddXdbEntry(zip, artPath, adoc, fileDate);
+                }
+            }
+        }
+
+        // Записывает 6 статов артефакта (SET) в <HeroStatsModif> (создаётся при необходимости).
+        private static void ApplyArtifactStats(XElement data, ArtifactStats st)
+        {
+            var mod = data.Element("HeroStatsModif");
+            if (mod == null)
+            {
+                mod = new XElement("HeroStatsModif");
+                data.Add(mod);
+            }
+            if (st.Attack.HasValue)     SetElementValue(mod, "Attack",     st.Attack.Value.ToString(CultureInfo.InvariantCulture));
+            if (st.Defence.HasValue)    SetElementValue(mod, "Defence",    st.Defence.Value.ToString(CultureInfo.InvariantCulture));
+            if (st.Knowledge.HasValue)  SetElementValue(mod, "Knowledge",  st.Knowledge.Value.ToString(CultureInfo.InvariantCulture));
+            if (st.SpellPower.HasValue) SetElementValue(mod, "SpellPower", st.SpellPower.Value.ToString(CultureInfo.InvariantCulture));
+            if (st.Morale.HasValue)     SetElementValue(mod, "Morale",     st.Morale.Value.ToString(CultureInfo.InvariantCulture));
+            if (st.Luck.HasValue)       SetElementValue(mod, "Luck",       st.Luck.Value.ToString(CultureInfo.InvariantCulture));
         }
 
         // Устанавливает href первого <Item> в списочном элементе (NameFileRef/DescriptionFileRef).
