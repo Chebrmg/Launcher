@@ -24,6 +24,41 @@ namespace Launcher
         public string? SpecNameFileRef { get; set; }
         public string? SpecDescFileRef { get; set; }
         public List<SpecModification>? Modifications { get; set; }
+        public List<HeroPerk>? Perks { get; set; }
+    }
+
+    // Кастомный перк мода: привязан к существующему перку из Skills.xdb (PerkId).
+    // Описание грузится из txt при парсинге (показ в лаунчере) + переопределяется в копии Skills.xdb.
+    // Эффекты применяются при взятии перка на лвлапе.
+    public class HeroPerk
+    {
+        public string PerkId { get; set; } = "";
+        public string? NameFileRef { get; set; }
+        public string? DescFileRef { get; set; }
+        public int Gold { get; set; }                 // +внутреннее золото лаунчера при взятии
+        public List<PerkStatMod>? Stats { get; set; }
+        public List<PerkArmyMod>? Army { get; set; }
+    }
+
+    // Прибавка к стату героя: amount = base + coef*source; ADD/MULT/SET.
+    public class PerkStatMod
+    {
+        public string Stat { get; set; } = "";        // OFFENCE | DEFENCE | SPELLPOWER | KNOWLEDGE
+        public string Operation { get; set; } = "ADD";
+        public double Base { get; set; }
+        public double Coef { get; set; }
+        public string Source { get; set; } = "NONE";   // NONE | LEVEL | OFFENCE | DEFENCE | SPELLPOWER | KNOWLEDGE
+    }
+
+    // Изменение армии по тиру: amount = base + coef*source [*WeeklyGrowth], затем ADD/MULT/SET к Count.
+    public class PerkArmyMod
+    {
+        public int Tier { get; set; }                  // 1..7
+        public string Operation { get; set; } = "ADD";
+        public double Base { get; set; }
+        public double Coef { get; set; }
+        public string Source { get; set; } = "NONE";
+        public bool UseGrowth { get; set; }            // умножать amount на WeeklyGrowth юнита слота
     }
 
     public class SpecModification
@@ -164,6 +199,52 @@ namespace Launcher
         private static string StripTagsPublic(string s) =>
             System.Text.RegularExpressions.Regex.Replace(s, "<[^>]+>", "").Trim();
 
+        // Кастомные перки героя из конфига (или null, если героя/перков нет).
+        public static List<HeroPerk>? GetHeroPerks(GameDataParser vfs, string internalName)
+        {
+            var cfg = LoadSettings(vfs);
+            var spec = cfg?.Heroes?.FirstOrDefault(h =>
+                string.Equals(h.InternalName, internalName, StringComparison.OrdinalIgnoreCase));
+            return spec?.Perks;
+        }
+
+        // Подменяет имя/описание у перков (SkillInfo) на тексты из duel_settings.json,
+        // чтобы при парсинге кастомное описание сразу было видно в лаунчере.
+        public static void ApplyPerkDisplay(GameDataParser vfs, List<SkillInfo> skills)
+        {
+            var cfg = LoadSettings(vfs);
+            if (cfg?.Heroes == null || cfg.Heroes.Count == 0) return;
+
+            foreach (var hero in cfg.Heroes)
+            {
+                if (hero.Perks == null) continue;
+                foreach (var perk in hero.Perks)
+                {
+                    if (string.IsNullOrWhiteSpace(perk.PerkId)) continue;
+                    var sk = skills.FirstOrDefault(s =>
+                        string.Equals(s.Id, perk.PerkId, StringComparison.OrdinalIgnoreCase));
+                    if (sk == null) continue;
+
+                    if (!string.IsNullOrWhiteSpace(perk.NameFileRef))
+                    {
+                        var t = vfs.ReadText(perk.NameFileRef!);
+                        if (!string.IsNullOrWhiteSpace(t)) OverrideAll(sk.Names, StripTagsPublic(t!));
+                    }
+                    if (!string.IsNullOrWhiteSpace(perk.DescFileRef))
+                    {
+                        var t = vfs.ReadText(perk.DescFileRef!);
+                        if (!string.IsNullOrWhiteSpace(t)) OverrideAll(sk.Descriptions, StripTagsPublic(t!));
+                    }
+                }
+            }
+        }
+
+        private static void OverrideAll(List<string> list, string value)
+        {
+            if (list.Count == 0) list.Add(value);
+            else for (int i = 0; i < list.Count; i++) list[i] = value;
+        }
+
         // ── Спец-модификации: подкладываем изменённые копии игровых файлов ─────────
         private static void ApplySpecs(ZipArchive zip, GameDataParser vfs,
             PlayerPreset p1, PlayerPreset p2)
@@ -236,6 +317,58 @@ namespace Launcher
 
                 AddXdbEntry(zip, sharedPath, hdoc, fileDate);
             }
+
+            // (C) Переопределение имени/описания кастомных перков в глобальной копии Skills.xdb
+            var perkRefs = selected
+                .Where(s => s.spec.Perks != null)
+                .SelectMany(s => s.spec.Perks!)
+                .Where(p => !string.IsNullOrWhiteSpace(p.PerkId) &&
+                            (!string.IsNullOrWhiteSpace(p.NameFileRef) || !string.IsNullOrWhiteSpace(p.DescFileRef)))
+                .ToList();
+
+            if (perkRefs.Count > 0)
+            {
+                const string skillsPath = "/GameMechanics/RefTables/Skills.xdb";
+                var sdoc = vfs.ReadXdb(skillsPath);
+                if (sdoc?.Root != null)
+                {
+                    var items = sdoc.Root.Element("objects")?.Elements("Item") ?? sdoc.Descendants("Item");
+                    var byId = items
+                        .Where(it => !string.IsNullOrEmpty(it.Element("ID")?.Value))
+                        .GroupBy(it => it.Element("ID")!.Value, StringComparer.OrdinalIgnoreCase)
+                        .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
+
+                    bool changed = false;
+                    foreach (var perk in perkRefs)
+                    {
+                        if (!byId.TryGetValue(perk.PerkId, out var item)) continue;
+                        var data = item.Element("obj") ?? item;
+                        if (!string.IsNullOrWhiteSpace(perk.NameFileRef))
+                        { SetListItemHref(data, "NameFileRef", perk.NameFileRef!); changed = true; }
+                        if (!string.IsNullOrWhiteSpace(perk.DescFileRef))
+                        { SetListItemHref(data, "DescriptionFileRef", perk.DescFileRef!); changed = true; }
+                    }
+                    if (changed) AddXdbEntry(zip, skillsPath, sdoc, fileDate);
+                }
+            }
+        }
+
+        // Устанавливает href первого <Item> в списочном элементе (NameFileRef/DescriptionFileRef).
+        private static void SetListItemHref(XElement data, string listName, string href)
+        {
+            var list = data.Element(listName);
+            if (list == null)
+            {
+                list = new XElement(listName);
+                data.Add(list);
+            }
+            var item = list.Element("Item");
+            if (item == null)
+            {
+                item = new XElement("Item");
+                list.Add(item);
+            }
+            item.SetAttributeValue("href", href);
         }
 
         private static void ApplyNumericMod(XDocument doc, SpecModification mod, PlayerPreset preset)
