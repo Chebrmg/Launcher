@@ -2215,8 +2215,8 @@ namespace Launcher
                 advanceable.Add((_racialSkillId, _racialMastery, true));
             foreach (var (sid, m) in _takenSkills)
             {
-                var sk = _allSkills.FirstOrDefault(s => s.Id == sid);
-                int maxM = (sk != null && sk.MasteryLevels >= 4) ? 3 : 2;
+                // Прокачка навыка ограничена Expert (3-я ступень) — 4-й уровень недоступен.
+                const int maxM = 2;
                 if (m < maxM) advanceable.Add((sid, m, false));
             }
 
