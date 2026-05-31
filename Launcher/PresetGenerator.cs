@@ -20,6 +20,7 @@ namespace Launcher
     public class HeroSpec
     {
         public string InternalName { get; set; } = "";
+        public string? Specialization { get; set; }    // новое значение <Specialization> (напр. HERO_SPEC_...)
         public string? SpecNameFileRef { get; set; }
         public string? SpecDescFileRef { get; set; }
         public List<SpecModification>? Modifications { get; set; }
@@ -121,21 +122,53 @@ namespace Launcher
             return outputPath;
         }
 
+        // Читает и парсит duel_settings.json из корня мода (или null, если нет/битый)
+        public static DuelSettings? LoadSettings(GameDataParser vfs)
+        {
+            string? cfgText = vfs.ReadText("/duel_settings.json");
+            if (string.IsNullOrWhiteSpace(cfgText)) return null;
+            try
+            {
+                return JsonSerializer.Deserialize<DuelSettings>(cfgText,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true, AllowTrailingCommas = true, ReadCommentHandling = JsonCommentHandling.Skip });
+            }
+            catch { return null; }
+        }
+
+        // Подменяет имя/описание спеца у распарсенных героев, чтобы окно выбора героя
+        // сразу показывало модовую специализацию из duel_settings.json.
+        public static void ApplyHeroSpecDisplay(GameDataParser vfs, List<HeroInfo> heroes)
+        {
+            var cfg = LoadSettings(vfs);
+            if (cfg?.Heroes == null || cfg.Heroes.Count == 0) return;
+
+            foreach (var hero in heroes)
+            {
+                var spec = cfg.Heroes.FirstOrDefault(h =>
+                    string.Equals(h.InternalName, hero.InternalName, StringComparison.OrdinalIgnoreCase));
+                if (spec == null) continue;
+
+                if (!string.IsNullOrWhiteSpace(spec.SpecNameFileRef))
+                {
+                    var t = vfs.ReadText(spec.SpecNameFileRef!);
+                    if (!string.IsNullOrWhiteSpace(t)) hero.SpecializationName = StripTagsPublic(t!);
+                }
+                if (!string.IsNullOrWhiteSpace(spec.SpecDescFileRef))
+                {
+                    var t = vfs.ReadText(spec.SpecDescFileRef!);
+                    if (!string.IsNullOrWhiteSpace(t)) hero.SpecializationDesc = StripTagsPublic(t!);
+                }
+            }
+        }
+
+        private static string StripTagsPublic(string s) =>
+            System.Text.RegularExpressions.Regex.Replace(s, "<[^>]+>", "").Trim();
+
         // ── Спец-модификации: подкладываем изменённые копии игровых файлов ─────────
         private static void ApplySpecs(ZipArchive zip, GameDataParser vfs,
             PlayerPreset p1, PlayerPreset p2)
         {
-            string? cfgText = vfs.ReadText("/duel_settings.json");
-            if (string.IsNullOrWhiteSpace(cfgText)) return;
-
-            DuelSettings? cfg;
-            try
-            {
-                cfg = JsonSerializer.Deserialize<DuelSettings>(cfgText,
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true, AllowTrailingCommas = true, ReadCommentHandling = JsonCommentHandling.Skip });
-            }
-            catch { return; }
-
+            var cfg = LoadSettings(vfs);
             if (cfg?.Heroes == null || cfg.Heroes.Count == 0) return;
 
             DateTime fileDate = new DateTime(2032, 1, 1);
@@ -180,10 +213,12 @@ namespace Launcher
                 AddXdbEntry(zip, kv.Key, doc, fileDate);
             }
 
-            // (B) Спека в копию xdb самого героя (SpecializationName/DescFileRef)
+            // (B) Спека в копию xdb самого героя (Specialization + Name/DescFileRef)
             foreach (var (preset, spec) in selected)
             {
-                if (string.IsNullOrWhiteSpace(spec.SpecNameFileRef) && string.IsNullOrWhiteSpace(spec.SpecDescFileRef))
+                if (string.IsNullOrWhiteSpace(spec.Specialization) &&
+                    string.IsNullOrWhiteSpace(spec.SpecNameFileRef) &&
+                    string.IsNullOrWhiteSpace(spec.SpecDescFileRef))
                     continue;
 
                 string folder = TownToFolder.TryGetValue(preset.Hero.TownType, out var f) ? f : "Haven";
@@ -192,6 +227,8 @@ namespace Launcher
                 var hdoc = vfs.ReadXdb(sharedPath);
                 if (hdoc?.Root == null) continue;
 
+                if (!string.IsNullOrWhiteSpace(spec.Specialization))
+                    SetElementValue(hdoc.Root, "Specialization", spec.Specialization!);
                 if (!string.IsNullOrWhiteSpace(spec.SpecNameFileRef))
                     SetHrefChild(hdoc.Root, "SpecializationNameFileRef", spec.SpecNameFileRef!);
                 if (!string.IsNullOrWhiteSpace(spec.SpecDescFileRef))
@@ -276,6 +313,17 @@ namespace Launcher
                 root.Add(el);
             }
             el.SetAttributeValue("href", href);
+        }
+
+        private static void SetElementValue(XElement root, string childName, string value)
+        {
+            var el = root.Element(childName);
+            if (el == null)
+            {
+                el = new XElement(childName);
+                root.Add(el);
+            }
+            el.Value = value;
         }
 
         private static void AddXdbEntry(ZipArchive zip, string entryPath, XDocument doc, DateTime date)
