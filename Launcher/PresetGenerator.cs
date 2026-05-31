@@ -25,6 +25,15 @@ namespace Launcher
         public string? SpecDescFileRef { get; set; }
         public List<SpecModification>? Modifications { get; set; }
         public List<HeroPerk>? Perks { get; set; }
+        public List<AbilityMod>? Abilities { get; set; }
+    }
+
+    // Добавление/удаление абилок (<Abilities><Item>...</Item></Abilities>) в копии xdb юнита.
+    public class AbilityMod
+    {
+        public string File { get; set; } = "";
+        public List<string>? Add { get; set; }
+        public List<string>? Remove { get; set; }
     }
 
     // Кастомный перк мода: привязан к существующему перку из Skills.xdb (PerkId).
@@ -400,30 +409,45 @@ namespace Launcher
             }
             if (selected.Count == 0) return;
 
-            // (A) Изменения игровых файлов — группируем по файлу (файл глобальный → одна копия)
+            // (A) Изменения игровых файлов — группируем по файлу (файл глобальный → одна копия).
+            // В одной копии файла последовательно применяются и числовые модификации, и абилки.
             var modsByFile = new Dictionary<string, List<(SpecModification mod, PlayerPreset preset)>>(StringComparer.OrdinalIgnoreCase);
+            var abilitiesByFile = new Dictionary<string, List<AbilityMod>>(StringComparer.OrdinalIgnoreCase);
             foreach (var (preset, spec) in selected)
             {
-                if (spec.Modifications == null) continue;
-                foreach (var mod in spec.Modifications)
-                {
-                    if (string.IsNullOrWhiteSpace(mod.File) || string.IsNullOrWhiteSpace(mod.Path)) continue;
-                    if (!modsByFile.TryGetValue(mod.File, out var list))
+                if (spec.Modifications != null)
+                    foreach (var mod in spec.Modifications)
                     {
-                        list = new List<(SpecModification, PlayerPreset)>();
-                        modsByFile[mod.File] = list;
+                        if (string.IsNullOrWhiteSpace(mod.File) || string.IsNullOrWhiteSpace(mod.Path)) continue;
+                        if (!modsByFile.TryGetValue(mod.File, out var list))
+                            modsByFile[mod.File] = list = new List<(SpecModification, PlayerPreset)>();
+                        list.Add((mod, preset));
                     }
-                    list.Add((mod, preset));
-                }
+
+                if (spec.Abilities != null)
+                    foreach (var am in spec.Abilities)
+                    {
+                        if (string.IsNullOrWhiteSpace(am.File)) continue;
+                        if ((am.Add == null || am.Add.Count == 0) && (am.Remove == null || am.Remove.Count == 0)) continue;
+                        if (!abilitiesByFile.TryGetValue(am.File, out var list))
+                            abilitiesByFile[am.File] = list = new List<AbilityMod>();
+                        list.Add(am);
+                    }
             }
 
-            foreach (var kv in modsByFile)
+            var allFiles = new HashSet<string>(modsByFile.Keys, StringComparer.OrdinalIgnoreCase);
+            allFiles.UnionWith(abilitiesByFile.Keys);
+            foreach (var file in allFiles)
             {
-                var doc = vfs.ReadXdb(kv.Key);
+                var doc = vfs.ReadXdb(file);
                 if (doc?.Root == null) continue;
-                foreach (var (mod, preset) in kv.Value)
-                    ApplyNumericMod(doc, mod, preset);
-                AddXdbEntry(zip, kv.Key, doc, fileDate);
+                if (modsByFile.TryGetValue(file, out var numMods))
+                    foreach (var (mod, preset) in numMods)
+                        ApplyNumericMod(doc, mod, preset);
+                if (abilitiesByFile.TryGetValue(file, out var abMods))
+                    foreach (var am in abMods)
+                        ApplyAbilityMod(doc, am);
+                AddXdbEntry(zip, file, doc, fileDate);
             }
 
             // (B) Спека в копию xdb самого героя (Specialization + Name/DescFileRef)
@@ -535,6 +559,44 @@ namespace Launcher
             string formatted = FormatLikeOriginal(origStr, newVal);
             if (attr != null) el.SetAttributeValue(attr, formatted);
             else el.Value = formatted;
+        }
+
+        // Добавляет/удаляет абилки в <Abilities> юнита (корневой элемент xdb).
+        // add — без дублей; remove — все совпадения; секция <Abilities> создаётся при необходимости.
+        private static void ApplyAbilityMod(XDocument doc, AbilityMod am)
+        {
+            var root = doc.Root;
+            if (root == null) return;
+
+            var abilities = root.Element("Abilities") ?? root.Descendants("Abilities").FirstOrDefault();
+            if (abilities == null)
+            {
+                abilities = new XElement("Abilities");
+                root.Add(abilities);
+            }
+
+            if (am.Remove != null)
+            {
+                foreach (var ab in am.Remove)
+                {
+                    if (string.IsNullOrWhiteSpace(ab)) continue;
+                    abilities.Elements("Item")
+                        .Where(it => string.Equals(it.Value.Trim(), ab.Trim(), StringComparison.OrdinalIgnoreCase))
+                        .ToList()
+                        .ForEach(it => it.Remove());
+                }
+            }
+
+            if (am.Add != null)
+            {
+                foreach (var ab in am.Add)
+                {
+                    if (string.IsNullOrWhiteSpace(ab)) continue;
+                    bool exists = abilities.Elements("Item")
+                        .Any(it => string.Equals(it.Value.Trim(), ab.Trim(), StringComparison.OrdinalIgnoreCase));
+                    if (!exists) abilities.Add(new XElement("Item", ab.Trim()));
+                }
+            }
         }
 
         private static XElement? NavigateElement(XDocument doc, string[] segments)
