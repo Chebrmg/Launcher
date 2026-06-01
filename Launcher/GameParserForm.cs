@@ -272,12 +272,26 @@ namespace Launcher
             new Label
             {
                 Parent = _selectionPanel,
-                Text = steam ? "Доступные комнаты:" : "Steam не запущен — доступен только режим «Один компьютер».",
+                Text = steam ? "Доступные комнаты:" : "Steam недоступен — доступен только режим «Один компьютер».",
                 Font = new Font("Segoe UI", 12, FontStyle.Bold),
                 ForeColor = steam ? Color.White : Color.FromArgb(255, 160, 120),
                 AutoSize = true,
                 Location = new Point(60, 75),
             };
+
+            if (!steam && !string.IsNullOrEmpty(SteamManager.LastError))
+            {
+                new Label
+                {
+                    Parent = _selectionPanel,
+                    Text = "Причина: " + SteamManager.LastError,
+                    Font = new Font("Segoe UI", 9),
+                    ForeColor = Color.FromArgb(220, 170, 120),
+                    AutoSize = true,
+                    MaximumSize = new Size(640, 0),
+                    Location = new Point(60, 98),
+                };
+            }
 
             if (steam)
             {
