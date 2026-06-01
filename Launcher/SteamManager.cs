@@ -27,6 +27,7 @@ namespace Launcher
         private const string KeyName = "name";
 
         public static bool Available { get; private set; }
+        public static string LastError { get; private set; } = "";
         public static bool InRoom { get; private set; }
         public static CSteamID CurrentLobby { get; private set; }
         public static bool IsHost { get; private set; }
@@ -57,13 +58,52 @@ namespace Launcher
         public static bool TryInit()
         {
             if (Available) return true;
+
+            // Проверка соответствия нативной DLL обёртке Steamworks.NET (битность/версия).
             try
             {
-                if (!SteamAPI.Init()) return false;
+                if (!Packsize.Test())
+                {
+                    LastError = "Packsize.Test() провален: несовпадение упаковки структур (неверная версия Steamworks.NET/SDK).";
+                    return false;
+                }
+                if (!DllCheck.Test())
+                {
+                    LastError = "DllCheck.Test() провален: рядом с .exe лежит steam_api64.dll неверной версии.";
+                    return false;
+                }
             }
-            catch (DllNotFoundException) { return false; }
-            catch (Exception) { return false; }
+            catch (DllNotFoundException)
+            {
+                LastError = "steam_api64.dll не найден рядом с .exe (возьмите из Steamworks SDK: sdk/redistributable_bin/win64/steam_api64.dll).";
+                return false;
+            }
+            catch (Exception ex)
+            {
+                LastError = "Ошибка проверки DLL: " + ex.Message;
+                return false;
+            }
 
+            try
+            {
+                if (!SteamAPI.Init())
+                {
+                    LastError = "SteamAPI.Init() вернул false. Проверьте: Steam запущен и вы залогинены; steam_appid.txt (480) лежит рядом с .exe.";
+                    return false;
+                }
+            }
+            catch (DllNotFoundException)
+            {
+                LastError = "steam_api64.dll не найден рядом с .exe.";
+                return false;
+            }
+            catch (Exception ex)
+            {
+                LastError = "Исключение SteamAPI.Init(): " + ex.Message;
+                return false;
+            }
+
+            LastError = "";
             Available = true;
 
             _cbLobbyData  = Callback<LobbyDataUpdate_t>.Create(OnLobbyDataUpdate);
