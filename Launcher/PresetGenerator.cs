@@ -17,45 +17,6 @@ namespace Launcher
         public List<HeroSpec>? Heroes { get; set; }
     }
 
-    // ── Конфиг режимов игры (game_modes.json в корне мода) ─────────────────────
-    public class GameModesConfig
-    {
-        public List<GameMode>? Modes { get; set; }
-    }
-
-    // Один режим игры. Имя/описание — inline-текст. SettingsFile — путь к конфигу спек
-    // (типа duel_settings.json), который редактирует игрок; пусто → "/duel_settings.json".
-    public class GameMode
-    {
-        public string Name { get; set; } = "";
-        public string Description { get; set; } = "";
-        public string? SettingsFile { get; set; }
-
-        public string FactionMode { get; set; } = "PICK";   // PICK | RANDOM | BAN
-        public int BanPoolSize { get; set; } = 6;           // BAN: сколько фракций предлагается (баним до 2)
-
-        public bool AllowNonNativeHero { get; set; }        // показать 1 неродного героя (случайный)
-
-        public int MaxLevel { get; set; } = 20;
-        public bool AllowExtraLevel { get; set; } = true;
-        public int StartGold { get; set; } = 120000;
-
-        public int MageGuildFloors { get; set; } = 5;       // макс. уровень заклов (магия)
-        public int WarcryFloors { get; set; } = 3;          // этажи кличей (орк)
-        public int RuneFloors { get; set; } = 5;            // этажи рун (гном)
-
-        public int SpellRerollCost { get; set; } = 5000;
-        public bool AllowSpellReroll { get; set; } = true;
-        public int ArtifactRerollCost { get; set; } = 5000;
-        public bool AllowArtifactReroll { get; set; } = true;
-
-        // Пул покупки тира = WeeklyGrowth * (ArmyGrowth[tier-1] + FactionGrowthBonus[faction][tier-1]).
-        public List<int>? ArmyGrowth { get; set; }                          // T1..T7
-        public Dictionary<string, List<int>>? FactionGrowthBonus { get; set; }
-
-        public List<string>? BannedArtifacts { get; set; }  // id артов, убираемых из магазина (оба игрока)
-    }
-
     public class HeroSpec
     {
         public string InternalName { get; set; } = "";
@@ -266,31 +227,15 @@ namespace Launcher
             return outputPath;
         }
 
-        private static readonly JsonSerializerOptions JsonOpts = new()
-        { PropertyNameCaseInsensitive = true, AllowTrailingCommas = true, ReadCommentHandling = JsonCommentHandling.Skip };
-
-        // Путь к активному конфигу спек (задаётся выбранным режимом). Пусто → "/duel_settings.json".
-        public static string ActiveSettingsFile { get; set; } = "/duel_settings.json";
-
-        // Читает и парсит конфиг спек активного режима (или null, если нет/битый)
+        // Читает и парсит duel_settings.json из корня мода (или null, если нет/битый)
         public static DuelSettings? LoadSettings(GameDataParser vfs)
         {
-            string path = string.IsNullOrWhiteSpace(ActiveSettingsFile) ? "/duel_settings.json" : ActiveSettingsFile;
-            string? cfgText = vfs.ReadText(path);
-            if (string.IsNullOrWhiteSpace(cfgText)) return null;
-            try { return JsonSerializer.Deserialize<DuelSettings>(cfgText, JsonOpts); }
-            catch { return null; }
-        }
-
-        // Читает список режимов игры из game_modes.json в корне мода (или null).
-        public static List<GameMode>? LoadGameModes(GameDataParser vfs)
-        {
-            string? cfgText = vfs.ReadText("/game_modes.json");
+            string? cfgText = vfs.ReadText("/duel_settings.json");
             if (string.IsNullOrWhiteSpace(cfgText)) return null;
             try
             {
-                var cfg = JsonSerializer.Deserialize<GameModesConfig>(cfgText, JsonOpts);
-                return cfg?.Modes;
+                return JsonSerializer.Deserialize<DuelSettings>(cfgText,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true, AllowTrailingCommas = true, ReadCommentHandling = JsonCommentHandling.Skip });
             }
             catch { return null; }
         }
