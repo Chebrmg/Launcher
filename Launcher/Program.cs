@@ -11,7 +11,18 @@ namespace Launcher
             // To customize application configuration such as set high DPI settings or default font,
             // see https://aka.ms/applicationconfiguration.
             ApplicationConfiguration.Initialize();
-            Application.Run(new Form1());
+
+            // Инициализация Steam (комнаты/мультиплеер). Если Steam не запущен или нет
+            // нативных DLL — приложение работает в режиме «Один компьютер».
+            SteamManager.TryInit();
+            try
+            {
+                Application.Run(new Form1());
+            }
+            finally
+            {
+                SteamManager.Shutdown();
+            }
         }
     }
 }
