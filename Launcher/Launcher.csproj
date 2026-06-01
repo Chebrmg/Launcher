@@ -11,6 +11,13 @@
 
   <ItemGroup>
     <PackageReference Include="Pfim" Version="0.11.2" />
+    <PackageReference Include="Steamworks.NET" Version="20.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="steam_appid.txt">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
   </ItemGroup>
 
   <ItemGroup>
