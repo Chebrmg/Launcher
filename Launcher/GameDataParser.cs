@@ -257,11 +257,11 @@ namespace Launcher
 
         private static readonly Dictionary<string, string> TownToFaction = new(StringComparer.Ordinal)
         {
-            { "TOWN_HEAVEN",     "Орден Света"    },
+            { "TOWN_HEAVEN",     "Орден Порядка"    },
             { "TOWN_INFERNO",    "Инферно"         },
             { "TOWN_NECROMANCY", "Некрополис"      },
             { "TOWN_PRESERVE",   "Лесной Союз"     },
-            { "TOWN_ACADEMY",    "Академия"        },
+            { "TOWN_ACADEMY",    "Академия Волшебства"        },
             { "TOWN_DUNGEON",    "Лига Теней"      },
             { "TOWN_FORTRESS",   "Северные Кланы"  },
             { "TOWN_STRONGHOLD", "Великая Орда"    },
@@ -271,11 +271,11 @@ namespace Launcher
 
         private static readonly Dictionary<string, string> PathToFaction = new(StringComparer.OrdinalIgnoreCase)
         {
-            { "Haven",     "Орден Света"   },
+            { "Haven",     "Орден Порядка"   },
             { "Inferno",   "Инферно"        },
             { "Necropolis","Некрополис"     },
             { "Preserve",  "Лесной Союз"   },
-            { "Academy",   "Академия"      },
+            { "Academy",   "Академия Волшебства"      },
             { "Dungeon",   "Лига Теней"    },
             { "Dwarf",     "Северные Кланы"},
             { "Orcs",      "Великая Орда"  },
@@ -284,17 +284,17 @@ namespace Launcher
 
         public static readonly string[] SelectableFactions =
         {
-            "Орден Света", "Инферно", "Некрополис", "Лесной Союз",
-            "Академия", "Лига Теней", "Северные Кланы", "Великая Орда"
+            "Орден Порядка", "Инферно", "Некрополис", "Лесной Союз",
+            "Академия Волшебства", "Лига Теней", "Северные Кланы", "Великая Орда"
         };
 
         public static readonly Dictionary<string, string[]> FactionPathSegments = new(StringComparer.Ordinal)
         {
-            { "Орден Света",   new[] { "/Haven/"     } },
+            { "Орден Порядка",   new[] { "/Haven/"     } },
             { "Инферно",       new[] { "/Inferno/"   } },
             { "Некрополис",    new[] { "/Necropolis/"} },
             { "Лесной Союз",   new[] { "/Preserve/"  } },
-            { "Академия",      new[] { "/Academy/"   } },
+            { "Академия Волшебства",      new[] { "/Academy/"   } },
             { "Лига Теней",    new[] { "/Dungeon/"   } },
             { "Северные Кланы",new[] { "/Dwarf/"     } },
             { "Великая Орда",  new[] { "/Orcs/"      } },
@@ -302,11 +302,11 @@ namespace Launcher
 
         public static readonly Dictionary<string, string> FactionToHeroClass = new(StringComparer.Ordinal)
         {
-            { "Орден Света",    "HERO_CLASS_KNIGHT"      },
+            { "Орден Порядка",    "HERO_CLASS_KNIGHT"      },
             { "Инферно",        "HERO_CLASS_DEMON_LORD"   },
             { "Некрополис",     "HERO_CLASS_NECROMANCER"  },
             { "Лесной Союз",    "HERO_CLASS_RANGER"       },
-            { "Академия",       "HERO_CLASS_WIZARD"       },
+            { "Академия Волшебства",       "HERO_CLASS_WIZARD"       },
             { "Лига Теней",     "HERO_CLASS_WARLOCK"      },
             { "Северные Кланы", "HERO_CLASS_RUNEMAGE"     },
             { "Великая Орда",   "HERO_CLASS_BARBARIAN"    },

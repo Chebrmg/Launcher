@@ -162,11 +162,11 @@ namespace Launcher
 
         public static readonly Dictionary<string, string> FactionToTown = new(StringComparer.Ordinal)
         {
-            { "Орден Света",    "TOWN_HEAVEN"     },
+            { "Орден Порядка",    "TOWN_HEAVEN"     },
             { "Инферно",        "TOWN_INFERNO"    },
             { "Некрополис",     "TOWN_NECROMANCY" },
             { "Лесной Союз",    "TOWN_PRESERVE"   },
-            { "Академия",       "TOWN_ACADEMY"    },
+            { "Академия Волшебства",       "TOWN_ACADEMY"    },
             { "Лига Теней",     "TOWN_DUNGEON"    },
             { "Северные Кланы", "TOWN_FORTRESS"   },
             { "Великая Орда",   "TOWN_STRONGHOLD" },

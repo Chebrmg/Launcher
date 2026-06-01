@@ -2897,11 +2897,11 @@ namespace Launcher
 
         private static readonly Dictionary<string, string[]> ProfiledSchools = new()
         {
-            { "Орден Света",    new[] { "MAGIC_SCHOOL_LIGHT", "MAGIC_SCHOOL_DARK" } },
+            { "Орден Порядка",    new[] { "MAGIC_SCHOOL_LIGHT", "MAGIC_SCHOOL_DARK" } },
             { "Инферно",        new[] { "MAGIC_SCHOOL_DARK", "MAGIC_SCHOOL_DESTRUCTIVE" } },
             { "Лесной Союз",    new[] { "MAGIC_SCHOOL_LIGHT", "MAGIC_SCHOOL_DESTRUCTIVE" } },
             { "Некрополис",     new[] { "MAGIC_SCHOOL_DARK", "MAGIC_SCHOOL_SUMMONING" } },
-            { "Академия",       new[] { "MAGIC_SCHOOL_LIGHT", "MAGIC_SCHOOL_SUMMONING" } },
+            { "Академия Волшебства",       new[] { "MAGIC_SCHOOL_LIGHT", "MAGIC_SCHOOL_SUMMONING" } },
             { "Лига Теней",     new[] { "MAGIC_SCHOOL_DESTRUCTIVE", "MAGIC_SCHOOL_SUMMONING" } },
             { "Северные Кланы", new[] { "MAGIC_SCHOOL_LIGHT", "MAGIC_SCHOOL_DESTRUCTIVE" } },
         };
