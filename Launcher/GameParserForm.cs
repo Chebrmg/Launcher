@@ -126,11 +126,24 @@ namespace Launcher
         private List<GameMode> _modes = new();
         private GameMode _mode = new();   // выбранный режим (или дефолтный, если game_modes.json нет)
 
+        // ── Сетевой режим (комнаты Steam) ──────────────────────────────────────────
+        private enum NetMode { Local, Host, Client }
+        private NetMode _net = NetMode.Local;
+        private int _localPlayer = 1;             // 1 = хост (Игрок 1), 2 = клиент (Игрок 2)
+        private bool _netHooked = false;
+        private PlayerPreset? _localPreset;
+        private PlayerPreset? _peerPreset;
+        private bool _localReady = false;
+        private bool _peerReady = false;
+        private bool _clientStarted = false;      // клиент уже начал свой флоу выбора
+        private Label? _netStatusLabel;           // статус ожидания соперника на экране вкладок
+
         public GameParserForm(string gameRoot)
         {
             _gameRoot = gameRoot;
             this.DoubleBuffered = true;
             InitUI();
+            FormClosed += (s, e) => UnhookNet();
         }
 
         private void InitUI()
@@ -219,7 +232,7 @@ namespace Launcher
                 _allSpells = spells;
                 _modes = modes ?? new List<GameMode>();
 
-                ShowModeSelection();
+                ShowRoomSelection();
             }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
         }
 
@@ -231,6 +244,533 @@ namespace Launcher
             PresetGenerator.ApplyArtifactDisplay(_parser, _allArtifacts);
             PresetGenerator.ApplyPerkDisplay(_parser, _allSkills);
             PresetGenerator.ApplyHeroSpecDisplay(_parser, _allHeroes);
+        }
+
+        // ════════════════════════════════════════════════════════════════════════
+        //  Экран 0: выбор комнаты (сетевая игра Steam) / «Один компьютер»
+        // ════════════════════════════════════════════════════════════════════════
+        private Panel? _roomListPanel;
+
+        private void ShowRoomSelection()
+        {
+            _selectionPanel.Controls.Clear();
+            _tabs.Visible = false;
+            _selectionPanel.Visible = true;
+
+            new Label
+            {
+                Parent = _selectionPanel,
+                Text = "Выбор игры",
+                Font = new Font("Segoe UI", 20, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                AutoSize = true,
+                Location = new Point(420, 20),
+            };
+
+            bool steam = SteamManager.Available;
+
+            new Label
+            {
+                Parent = _selectionPanel,
+                Text = steam ? "Доступные комнаты:" : "Steam не запущен — доступен только режим «Один компьютер».",
+                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                ForeColor = steam ? Color.White : Color.FromArgb(255, 160, 120),
+                AutoSize = true,
+                Location = new Point(60, 75),
+            };
+
+            if (steam)
+            {
+                HookNet();
+
+                _roomListPanel = new Panel
+                {
+                    Parent = _selectionPanel,
+                    Location = new Point(60, 105),
+                    Size = new Size(640, 360),
+                    BackColor = Color.FromArgb(25, 25, 35),
+                    BorderStyle = BorderStyle.FixedSingle,
+                    AutoScroll = true,
+                };
+
+                var btnRefresh = AddSelectionButton("Обновить", new Point(720, 105));
+                btnRefresh.Size = new Size(180, 40);
+                btnRefresh.BackColor = Color.FromArgb(60, 90, 140);
+                btnRefresh.Click += (s, ev) => SteamManager.RefreshRoomList();
+
+                var btnCreate = AddSelectionButton("Создать комнату", new Point(720, 155));
+                btnCreate.Size = new Size(180, 40);
+                btnCreate.Click += (s, ev) =>
+                {
+                    string name = "Комната " + (SteamFriendsName());
+                    SteamManager.CreateRoom(name);
+                };
+
+                SteamManager.RefreshRoomList();
+            }
+
+            var btnLocal = AddSelectionButton("Один компьютер", new Point(720, steam ? 230 : 105));
+            btnLocal.Size = new Size(180, 50);
+            btnLocal.BackColor = Color.FromArgb(50, 120, 50);
+            btnLocal.Click += (s, ev) =>
+            {
+                _net = NetMode.Local;
+                ShowModeSelection();
+            };
+        }
+
+        private static string SteamFriendsName()
+        {
+            try { return Steamworks.SteamFriends.GetPersonaName(); }
+            catch { return "игрок"; }
+        }
+
+        private void RenderRoomList(List<RoomInfo> rooms)
+        {
+            if (_roomListPanel == null || _roomListPanel.IsDisposed) return;
+            _roomListPanel.Controls.Clear();
+
+            if (rooms.Count == 0)
+            {
+                new Label
+                {
+                    Parent = _roomListPanel,
+                    Text = "Нет доступных комнат. Создайте свою.",
+                    Font = new Font("Segoe UI", 11),
+                    ForeColor = Color.Gray,
+                    AutoSize = true,
+                    Location = new Point(15, 15),
+                };
+                return;
+            }
+
+            int y = 8;
+            foreach (var room in rooms)
+            {
+                var btn = new Button
+                {
+                    Parent = _roomListPanel,
+                    Text = $"{room.Name}   ({room.Members}/2)",
+                    Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                    Size = new Size(600, 44),
+                    Location = new Point(10, y),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = room.Members >= 2 ? Color.FromArgb(60, 50, 50) : Color.FromArgb(45, 60, 80),
+                    ForeColor = Color.White,
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    Enabled = room.Members < 2,
+                };
+                btn.FlatAppearance.BorderSize = 0;
+                var id = room.LobbyId;
+                btn.Click += (s, ev) => SteamManager.JoinRoom(id);
+                y += 50;
+            }
+        }
+
+        // ── Экран ожидания в комнате ───────────────────────────────────────────────
+        private void ShowRoomLobby()
+        {
+            _selectionPanel.Controls.Clear();
+            _tabs.Visible = false;
+            _selectionPanel.Visible = true;
+
+            new Label
+            {
+                Parent = _selectionPanel,
+                Text = SteamManager.IsHost ? "Комната создана" : "Подключено к комнате",
+                Font = new Font("Segoe UI", 20, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                AutoSize = true,
+                Location = new Point(380, 60),
+            };
+
+            _netStatusLabel = new Label
+            {
+                Parent = _selectionPanel,
+                Text = SteamManager.PeerId != Steamworks.CSteamID.Nil
+                    ? "Второй игрок в комнате."
+                    : "Ожидание второго игрока...",
+                Font = new Font("Segoe UI", 13),
+                ForeColor = Color.White,
+                AutoSize = true,
+                Location = new Point(380, 120),
+            };
+
+            if (SteamManager.IsHost)
+            {
+                var btnStart = AddSelectionButton("Начать", new Point(440, 200));
+                btnStart.Enabled = SteamManager.PeerId != Steamworks.CSteamID.Nil;
+                btnStart.Name = "btnStartHost";
+                btnStart.Click += (s, ev) =>
+                {
+                    if (SteamManager.PeerId == Steamworks.CSteamID.Nil) return;
+                    ShowModeSelection();   // хост выбирает режим/фракции (сетевые ветки внутри)
+                };
+            }
+
+            var btnLeave = AddSelectionButton("Выйти", new Point(440, 270));
+            btnLeave.BackColor = Color.FromArgb(120, 50, 50);
+            btnLeave.Click += (s, ev) =>
+            {
+                SteamManager.LeaveRoom();
+                _net = NetMode.Local;
+                ShowRoomSelection();
+            };
+        }
+
+        // ── Подписка на события Steam ───────────────────────────────────────────────
+        private void HookNet()
+        {
+            if (_netHooked || !SteamManager.Available) return;
+            _netHooked = true;
+            SteamManager.RoomListUpdated += OnNetRoomList;
+            SteamManager.RoomEntered     += OnNetRoomEntered;
+            SteamManager.RoomFailed      += OnNetRoomFailed;
+            SteamManager.PeerJoined      += OnNetPeerJoined;
+            SteamManager.PeerLeft        += OnNetPeerLeft;
+            SteamManager.MessageReceived += OnNetMessage;
+            SteamManager.LobbyDataChanged += OnNetLobbyData;
+        }
+
+        private void UnhookNet()
+        {
+            if (!_netHooked) return;
+            _netHooked = false;
+            SteamManager.RoomListUpdated -= OnNetRoomList;
+            SteamManager.RoomEntered     -= OnNetRoomEntered;
+            SteamManager.RoomFailed      -= OnNetRoomFailed;
+            SteamManager.PeerJoined      -= OnNetPeerJoined;
+            SteamManager.PeerLeft        -= OnNetPeerLeft;
+            SteamManager.MessageReceived -= OnNetMessage;
+            SteamManager.LobbyDataChanged -= OnNetLobbyData;
+            try { SteamManager.LeaveRoom(); } catch { }
+        }
+
+        private void OnNetRoomList(List<RoomInfo> rooms)
+        {
+            if (IsDisposed) return;
+            RenderRoomList(rooms);
+        }
+
+        private void OnNetRoomEntered(bool isHost)
+        {
+            if (IsDisposed) return;
+            _net = isHost ? NetMode.Host : NetMode.Client;
+            _localPlayer = isHost ? 1 : 2;
+            ShowRoomLobby();
+        }
+
+        private void OnNetRoomFailed()
+        {
+            if (IsDisposed) return;
+            MessageBox.Show("Не удалось создать или подключиться к комнате.", "Steam",
+                MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            _net = NetMode.Local;
+            ShowRoomSelection();
+        }
+
+        private void OnNetPeerJoined()
+        {
+            if (IsDisposed) return;
+            if (_netStatusLabel != null && !_netStatusLabel.IsDisposed)
+                _netStatusLabel.Text = "Второй игрок в комнате.";
+            var btn = _selectionPanel.Controls.Find("btnStartHost", true).FirstOrDefault();
+            if (btn != null) btn.Enabled = true;
+        }
+
+        private void OnNetPeerLeft()
+        {
+            if (IsDisposed) return;
+            MessageBox.Show("Соперник покинул комнату.", "Steam",
+                MessageBoxButtons.OK, MessageBoxIcon.Information);
+            SteamManager.LeaveRoom();
+            _net = NetMode.Local;
+            ShowRoomSelection();
+        }
+
+        // Клиент: дождаться, пока хост зальёт режим/фракции в метаданные лобби.
+        private void OnNetLobbyData()
+        {
+            if (IsDisposed || _net != NetMode.Client || _clientStarted) return;
+
+            string sMode = SteamManager.GetLobbyData("mode");
+            string f1 = SteamManager.GetLobbyData("f1");
+            string f2 = SteamManager.GetLobbyData("f2");
+            if (string.IsNullOrEmpty(f1) || string.IsNullOrEmpty(f2)) return;
+
+            _clientStarted = true;
+
+            // Режим по индексу (или дефолтный, если индекс < 0 / нет game_modes.json).
+            int idx = int.TryParse(sMode, out int mi) ? mi : -1;
+            if (idx >= 0 && idx < _modes.Count) _mode = _modes[idx];
+            else _mode = new GameMode();
+            PresetGenerator.ActiveSettingsFile = string.IsNullOrWhiteSpace(_mode.SettingsFile)
+                ? "/duel_settings.json" : _mode.SettingsFile!;
+            ApplyModeDisplay();
+
+            StartWithFactions(f1, f2);   // распарсит обе фракции и уйдёт в сетевой выбор героя
+        }
+
+        // Хост публикует выбранные режим/фракции в метаданные лобби.
+        private void PublishNetSetup()
+        {
+            int idx = _modes.IndexOf(_mode);
+            SteamManager.SetLobbyData("mode", idx.ToString());
+            SteamManager.SetLobbyData("f1", _faction1);
+            SteamManager.SetLobbyData("f2", _faction2);
+        }
+
+        // ── Сетевой выбор героя (только локальный игрок) ─────────────────────────────
+        private void ShowNetHeroSelection()
+        {
+            _selectionPanel.Controls.Clear();
+            _tabs.Visible = false;
+            _selectionPanel.Visible = true;
+
+            var rng = new Random();
+            string localFaction = _localPlayer == 1 ? _faction1 : _faction2;
+            string nativeClass = GameDataParser.FactionToHeroClass.TryGetValue(localFaction, out var hc) ? hc : "";
+            var choices = BuildHeroChoices(nativeClass, rng);
+
+            new Label
+            {
+                Parent = _selectionPanel,
+                Text = "Выберите героя",
+                Font = new Font("Segoe UI", 18, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                AutoSize = true,
+                Location = new Point(420, 20),
+            };
+            new Label
+            {
+                Parent = _selectionPanel,
+                Text = $"Вы (Игрок {_localPlayer}): {localFaction}    Соперник: {(_localPlayer == 1 ? _faction2 : _faction1)}",
+                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                ForeColor = Color.FromArgb(100, 180, 255),
+                AutoSize = true,
+                Location = new Point(50, 75),
+            };
+
+            HeroInfo? selected = null;
+            var col = BuildHeroColumn(choices, nativeClass, 50, h => selected = h);
+
+            int btnY = 110 + choices.Count * 140 + 10;
+            var btnConfirm = new Button
+            {
+                Parent = _selectionPanel,
+                Text = "Подтвердить",
+                Font = new Font("Segoe UI", 13, FontStyle.Bold),
+                Size = new Size(200, 45),
+                Location = new Point(450, btnY),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(50, 120, 50),
+                ForeColor = Color.White,
+            };
+            btnConfirm.FlatAppearance.BorderSize = 0;
+            btnConfirm.Click += (s, ev) =>
+            {
+                if (selected == null)
+                {
+                    MessageBox.Show("Выберите героя!", "Парсер", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                var creatures = _localPlayer == 1 ? _creatures1 : _creatures2;
+                ShowNetMainContent(creatures, selected, localFaction);
+            };
+
+            if (choices.Count > 0) { selected = choices[0]; col[0].BackColor = Color.FromArgb(60, 120, 60); }
+        }
+
+        // ── Сетевой экран вкладок (только локальный игрок) ───────────────────────────
+        private bool _presetGenerated = false;
+
+        private void ShowNetMainContent(List<CreatureInfo> creatures, HeroInfo hero, string faction)
+        {
+            _selectionPanel.Visible = false;
+
+            var topPanel = new Panel
+            {
+                Parent = this,
+                Location = new Point(10, 10),
+                Size = new Size(Width - 36, 40),
+                BackColor = Color.FromArgb(35, 35, 50),
+            };
+            new Label
+            {
+                Parent = topPanel,
+                Text = $"Игрок {_localPlayer}: {faction} — {hero.Name}",
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                ForeColor = Color.White,
+                AutoSize = true,
+                Location = new Point(8, 9),
+            };
+            _netStatusLabel = new Label
+            {
+                Parent = topPanel,
+                Text = "",
+                Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                AutoSize = true,
+                Location = new Point(360, 11),
+            };
+
+            var btnReady = new Button
+            {
+                Parent = topPanel,
+                Text = "Готов!",
+                Font = new Font("Segoe UI", 11, FontStyle.Bold),
+                Size = new Size(160, 34),
+                Location = new Point(topPanel.Width - 170, 3),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(50, 160, 50),
+                ForeColor = Color.White,
+            };
+            btnReady.FlatAppearance.BorderSize = 0;
+
+            _tabs.Location = new Point(10, 55);
+            _tabs.Size = new Size(Width - 36, Height - 105);
+            _tabs.Visible = true;
+            _tabs.TabPages.Clear();
+
+            var gold = new GoldState(_mode.StartGold);
+
+            var tabArmy = new TabPage("Армия") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
+            var tabArt = new TabPage("Артефакты") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
+            var tabLvl = new TabPage("Прокачка") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
+            var tabSpells = new TabPage("Заклинания") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
+
+            var hci = _heroClasses.FirstOrDefault(c => c.Id == hero.HeroClass);
+            var perks = _parser != null ? PresetGenerator.GetHeroPerks(_parser, hero.InternalName) : null;
+            var customArts = _parser != null ? PresetGenerator.GetHeroArtifacts(_parser, hero.InternalName) : null;
+
+            var armyTab = new ArmyPurchaseTab(tabArmy, creatures, gold, TierMultResolver(faction));
+            var artTab = new ArtifactTab(tabArt, _allArtifacts, gold, customArts,
+                _mode.ArtifactRerollCost, _mode.AllowArtifactReroll, _mode.BannedArtifacts);
+            var lvlTab = new LevelingTab(tabLvl, hero, _allSkills, hci, gold, perks,
+                _mode.MaxLevel, _mode.AllowExtraLevel);
+            var spellTab = new SpellTab(tabSpells, _allSpells, faction, hero.HeroClass, gold,
+                _mode.SpellRerollCost, _mode.AllowSpellReroll, _mode.MageGuildFloors, _mode.WarcryFloors, _mode.RuneFloors);
+
+            _tabs.TabPages.Add(tabArmy);
+            _tabs.TabPages.Add(tabArt);
+            _tabs.TabPages.Add(tabLvl);
+            _tabs.TabPages.Add(tabSpells);
+
+            btnReady.Click += (s, ev) =>
+            {
+                if (_localReady) return;
+                _localPreset = BuildPreset(hero, armyTab, artTab, lvlTab, spellTab, gold);
+                _localReady = true;
+
+                var dto = NetProtocol.ToDto(_localPreset, faction);
+                bool sent = SteamManager.SendToPeer(NetProtocol.Encode(NetMsgType.PlayerReady, dto));
+
+                btnReady.Enabled = false;
+                btnReady.Text = "Готов ✓";
+                _tabs.Enabled = false;
+                _netStatusLabel.Text = sent
+                    ? "Данные отправлены. Ожидание соперника..."
+                    : "Не удалось отправить данные сопернику!";
+                _netStatusLabel.ForeColor = sent ? Color.FromArgb(255, 220, 100) : Color.OrangeRed;
+
+                TryGeneratePreset();
+            };
+        }
+
+        private void OnNetMessage(byte[] data)
+        {
+            if (IsDisposed) return;
+            if (!NetProtocol.TryDecode(data, out var type, out var dto) || dto == null) return;
+            if (type != NetMsgType.PlayerReady) return;
+
+            _peerPreset = ReconstructPreset(dto);
+            _peerReady = true;
+
+            if (_netStatusLabel != null && !_netStatusLabel.IsDisposed && _localReady)
+                _netStatusLabel.Text = "Соперник готов. Сборка пресета...";
+
+            TryGeneratePreset();
+        }
+
+        // Восстановить PlayerPreset соперника из DTO по локальным данным мода.
+        private PlayerPreset ReconstructPreset(NetPlayerData d)
+        {
+            var hero = _allHeroes.FirstOrDefault(h => h.InternalName == d.HeroId) ?? new HeroInfo();
+
+            var allCreatures = _creatures1.Concat(_creatures2).ToList();
+            var slots = new ArmySlot[7];
+            int si = 0;
+            foreach (var ns in d.Army)
+            {
+                if (si >= 7) break;
+                var cr = allCreatures.FirstOrDefault(c => c.Id == ns.Id);
+                if (cr == null) continue;
+                slots[si++] = new ArmySlot { Creature = cr, Count = ns.Count };
+            }
+
+            var equipped = new Dictionary<string, ArtifactInfo?>();
+            foreach (var kv in d.Artifacts)
+            {
+                var art = _allArtifacts.FirstOrDefault(a => a.Id == kv.Value);
+                if (art != null) equipped[kv.Key] = art;
+            }
+
+            var spells = d.Spells
+                .Select(id => _allSpells.FirstOrDefault(s => s.Id == id))
+                .Where(s => s != null).Select(s => s!).ToList();
+            var runes = d.Runes
+                .Select(id => _allSpells.FirstOrDefault(s => s.Id == id))
+                .Where(s => s != null).Select(s => s!).ToList();
+
+            return new PlayerPreset
+            {
+                Hero = hero,
+                ArmySlots = slots,
+                EquippedArtifacts = equipped,
+                HeroLevel = d.HeroLevel,
+                TotalOffence = d.Offence,
+                TotalDefence = d.Defence,
+                TotalSpellpower = d.Spellpower,
+                TotalKnowledge = d.Knowledge,
+                Skills = d.Skills.Select(s => (s.Id, s.Mastery)).ToList(),
+                Perks = new List<string>(d.Perks),
+                RacialMastery = d.RacialMastery,
+                Spells = spells,
+                Runes = runes,
+                GoldSpent = d.GoldSpent,
+            };
+        }
+
+        // Когда оба игрока готовы — детерминированно собрать одинаковый пресет на обеих машинах.
+        private void TryGeneratePreset()
+        {
+            if (_presetGenerated) return;
+            if (!_localReady || !_peerReady || _localPreset == null || _peerPreset == null) return;
+            _presetGenerated = true;
+
+            // Хост = Игрок 1 (faction1), клиент = Игрок 2 (faction2) — порядок одинаков на обеих машинах.
+            var p1 = _localPlayer == 1 ? _localPreset : _peerPreset;
+            var p2 = _localPlayer == 1 ? _peerPreset : _localPreset;
+
+            string userModsDir = System.IO.Path.Combine(_gameRoot, "UserMods");
+            try
+            {
+                string path = PresetGenerator.Generate(userModsDir, p1, p2,
+                    _faction1, _faction2, _parser, _allSpells);
+                if (_netStatusLabel != null && !_netStatusLabel.IsDisposed)
+                {
+                    _netStatusLabel.Text = "Пресет готов!";
+                    _netStatusLabel.ForeColor = Color.LightGreen;
+                }
+                MessageBox.Show($"Пресет сохранён:\n{path}", "Готово!",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception ex)
+            {
+                _presetGenerated = false;
+                MessageBox.Show($"Ошибка создания пресета:\n{ex.Message}", "Ошибка",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         // ── Экран 1: выбор режима игры ────────────────────────────────────────────
@@ -564,7 +1104,16 @@ namespace Launcher
 
                 _creatures1 = c1;
                 _creatures2 = c2;
-                ShowHeroSelection();
+
+                if (_net != NetMode.Local)
+                {
+                    if (_net == NetMode.Host) PublishNetSetup();
+                    ShowNetHeroSelection();   // каждый игрок выбирает только своего героя
+                }
+                else
+                {
+                    ShowHeroSelection();
+                }
             }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
         }
 
