@@ -104,10 +104,10 @@ namespace Launcher
 
         public TierPool(int tier) { Tier = tier; }
 
-        public void Initialize()
+        public void Initialize(int? multiplier = null)
         {
             int baseGrowth = Creatures.Where(c => c.IsBase).Sum(c => c.WeeklyGrowth);
-            MaxPool = baseGrowth * TierMultipliers.Get(Tier);
+            MaxPool = baseGrowth * (multiplier ?? TierMultipliers.Get(Tier));
             Available = MaxPool;
         }
     }
@@ -119,14 +119,12 @@ namespace Launcher
     {
         private readonly string _gameRoot;
         private Panel _selectionPanel = null!;
-        private ComboBox _cmbFaction1 = null!;
-        private ComboBox _cmbFaction2 = null!;
-        private Button _btnStart = null!;
         private Label _selectionStatus = null!;
         private TabControl _tabs = null!;
         private string _faction1 = "";
         private string _faction2 = "";
-        private int _totalGold = 120000;
+        private List<GameMode> _modes = new();
+        private GameMode _mode = new();   // выбранный режим (или дефолтный, если game_modes.json нет)
 
         public GameParserForm(string gameRoot)
         {
@@ -151,88 +149,17 @@ namespace Launcher
                 Location = Point.Empty,
                 Size = ClientSize,
                 BackColor = Color.FromArgb(30, 30, 40),
+                AutoScroll = true,
             };
-
-            new Label
-            {
-                Parent = _selectionPanel,
-                Text = "Выберите фракции",
-                Font = new Font("Segoe UI", 20, FontStyle.Bold),
-                ForeColor = Color.FromArgb(255, 220, 100),
-                AutoSize = true,
-                Location = new Point(400, 120),
-            };
-
-            new Label
-            {
-                Parent = _selectionPanel,
-                Text = "Игрок 1:",
-                Font = new Font("Segoe UI", 12, FontStyle.Bold),
-                ForeColor = Color.FromArgb(100, 180, 255),
-                AutoSize = true,
-                Location = new Point(350, 220),
-            };
-
-            _cmbFaction1 = new ComboBox
-            {
-                Parent = _selectionPanel,
-                Location = new Point(460, 218),
-                Size = new Size(250, 30),
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Font = new Font("Segoe UI", 11),
-                BackColor = Color.FromArgb(50, 50, 65),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-            };
-            foreach (string f in GameDataParser.SelectableFactions) _cmbFaction1.Items.Add(f);
-            _cmbFaction1.SelectedIndex = 0;
-
-            new Label
-            {
-                Parent = _selectionPanel,
-                Text = "Игрок 2:",
-                Font = new Font("Segoe UI", 12, FontStyle.Bold),
-                ForeColor = Color.FromArgb(255, 130, 130),
-                AutoSize = true,
-                Location = new Point(350, 280),
-            };
-
-            _cmbFaction2 = new ComboBox
-            {
-                Parent = _selectionPanel,
-                Location = new Point(460, 278),
-                Size = new Size(250, 30),
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Font = new Font("Segoe UI", 11),
-                BackColor = Color.FromArgb(50, 50, 65),
-                ForeColor = Color.White,
-                FlatStyle = FlatStyle.Flat,
-            };
-            foreach (string f in GameDataParser.SelectableFactions) _cmbFaction2.Items.Add(f);
-            _cmbFaction2.SelectedIndex = 1;
-
-            _btnStart = new Button
-            {
-                Parent = _selectionPanel,
-                Text = "Начать",
-                Font = new Font("Segoe UI", 13, FontStyle.Bold),
-                Size = new Size(200, 45),
-                Location = new Point(450, 370),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(50, 120, 50),
-                ForeColor = Color.White,
-            };
-            _btnStart.FlatAppearance.BorderSize = 0;
-            _btnStart.Click += BtnStart_Click;
 
             _selectionStatus = new Label
             {
                 Parent = _selectionPanel,
-                Text = "",
-                Font = new Font("Segoe UI", 10),
+                Text = "Загрузка данных...",
+                Font = new Font("Segoe UI", 12),
                 ForeColor = Color.Gray,
-                Size = new Size(600, 100),
-                Location = new Point(260, 440),
+                Size = new Size(700, 200),
+                Location = new Point(230, 340),
                 TextAlign = ContentAlignment.TopCenter,
             };
 
@@ -245,6 +172,8 @@ namespace Launcher
                 Font = new Font("Segoe UI", 10, FontStyle.Bold),
                 Visible = false,
             };
+
+            LoadGameDataAsync();
         }
 
         private List<SkillInfo> _allSkills = new();
@@ -256,67 +185,441 @@ namespace Launcher
         private List<CreatureInfo> _creatures2 = new();
         private GameDataParser? _parser;
 
-        private void BtnStart_Click(object? sender, EventArgs e)
+        // Загрузка VFS + парсинг данных, не зависящих от фракций (арты/навыки/классы/герои/заклы),
+        // и списка режимов. Фракционные юниты грузятся позже, после выбора фракций.
+        private void LoadGameDataAsync()
         {
-            _faction1 = _cmbFaction1.SelectedItem?.ToString() ?? "";
-            _faction2 = _cmbFaction2.SelectedItem?.ToString() ?? "";
-
-            if (_faction1 == _faction2)
-            {
-                MessageBox.Show("Выберите разные фракции!", "Парсер", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return;
-            }
-
-            _btnStart.Enabled = false;
-            _selectionStatus.Text = "Загрузка данных...";
-            _selectionStatus.ForeColor = Color.Gray;
-
             System.Threading.Tasks.Task.Run(() =>
             {
                 var parser = new GameDataParser(_gameRoot);
                 parser.BuildVfs();
-                var c1 = parser.ParseCreatures(new List<string> { _faction1 });
-                var c2 = parser.ParseCreatures(new List<string> { _faction2 });
                 var artifacts = parser.ParseArtifacts();
-                PresetGenerator.ApplyArtifactDisplay(parser, artifacts);
                 var skills = parser.ParseSkills();
-                PresetGenerator.ApplyPerkDisplay(parser, skills);
                 var heroClasses = parser.ParseHeroClasses();
                 var heroes = parser.ParseHeroes();
-                PresetGenerator.ApplyHeroSpecDisplay(parser, heroes);
                 var spells = parser.ParseSpells();
                 parser.MapSpellGameIds(spells);
+                var modes = PresetGenerator.LoadGameModes(parser);
                 _parser = parser;
-                return (c1, c2, artifacts, skills, heroClasses, heroes, spells, parser.DiagInfo);
+                return (artifacts, skills, heroClasses, heroes, spells, modes, parser.DiagInfo);
             }).ContinueWith(task =>
             {
                 if (task.IsFaulted)
                 {
                     _selectionStatus.Text = "Ошибка: " + task.Exception?.InnerException?.Message;
                     _selectionStatus.ForeColor = Color.Red;
-                    _btnStart.Enabled = true;
                     return;
                 }
 
-                var (c1, c2, artifacts, skills, heroClasses, heroes, spells, diag) = task.Result;
-                if (c1.Count == 0 && c2.Count == 0)
-                {
-                    _selectionStatus.Text = "Юниты не найдены.\n\nДиагностика:\n" + diag;
-                    _selectionStatus.ForeColor = Color.OrangeRed;
-                    _btnStart.Enabled = true;
-                    return;
-                }
-
-                _creatures1 = c1;
-                _creatures2 = c2;
+                var (artifacts, skills, heroClasses, heroes, spells, modes, diag) = task.Result;
                 _allArtifacts = artifacts;
                 _allSkills = skills;
                 _heroClasses = heroClasses;
                 _allHeroes = heroes;
                 _allSpells = spells;
+                _modes = modes ?? new List<GameMode>();
 
+                ShowModeSelection();
+            }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
+        }
+
+        // Применить модовое отображение (имена/описания спек/перков/артов) с учётом
+        // ActiveSettingsFile выбранного режима. Вызывается после выбора режима.
+        private void ApplyModeDisplay()
+        {
+            if (_parser == null) return;
+            PresetGenerator.ApplyArtifactDisplay(_parser, _allArtifacts);
+            PresetGenerator.ApplyPerkDisplay(_parser, _allSkills);
+            PresetGenerator.ApplyHeroSpecDisplay(_parser, _allHeroes);
+        }
+
+        // ── Экран 1: выбор режима игры ────────────────────────────────────────────
+        private void ShowModeSelection()
+        {
+            // Нет game_modes.json → дефолтный режим (старое поведение, /duel_settings.json).
+            if (_modes.Count == 0)
+            {
+                _mode = new GameMode();
+                PresetGenerator.ActiveSettingsFile = "/duel_settings.json";
+                ApplyModeDisplay();
+                ShowFactionSelection();
+                return;
+            }
+
+            _selectionPanel.Controls.Clear();
+            _tabs.Visible = false;
+            _selectionPanel.Visible = true;
+
+            new Label
+            {
+                Parent = _selectionPanel,
+                Text = "Выберите режим игры",
+                Font = new Font("Segoe UI", 20, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                AutoSize = true,
+                Location = new Point(380, 30),
+            };
+
+            int y = 100;
+            foreach (var mode in _modes)
+            {
+                var card = new Panel
+                {
+                    Parent = _selectionPanel,
+                    Location = new Point(120, y),
+                    Size = new Size(880, 110),
+                    BackColor = Color.FromArgb(50, 50, 70),
+                    BorderStyle = BorderStyle.FixedSingle,
+                    Cursor = Cursors.Hand,
+                };
+                new Label
+                {
+                    Parent = card,
+                    Text = string.IsNullOrWhiteSpace(mode.Name) ? "(без названия)" : mode.Name,
+                    Font = new Font("Segoe UI", 14, FontStyle.Bold),
+                    ForeColor = Color.White,
+                    AutoSize = true,
+                    Location = new Point(12, 10),
+                    Cursor = Cursors.Hand,
+                };
+                new Label
+                {
+                    Parent = card,
+                    Text = mode.Description ?? "",
+                    Font = new Font("Segoe UI", 10),
+                    ForeColor = Color.LightGray,
+                    Location = new Point(12, 44),
+                    Size = new Size(856, 58),
+                    Cursor = Cursors.Hand,
+                };
+                var chosen = mode;
+                void Pick() => SelectMode(chosen);
+                card.Click += (s, ev) => Pick();
+                foreach (Control c in card.Controls) c.Click += (s, ev) => Pick();
+                y += 124;
+            }
+        }
+
+        private void SelectMode(GameMode mode)
+        {
+            _mode = mode;
+            PresetGenerator.ActiveSettingsFile = string.IsNullOrWhiteSpace(mode.SettingsFile)
+                ? "/duel_settings.json" : mode.SettingsFile!;
+            ApplyModeDisplay();
+            ShowFactionSelection();
+        }
+
+        // ── Экран 2: выбор фракций (PICK / RANDOM / BAN) ────────────────────────────
+        private void ShowFactionSelection()
+        {
+            string fm = (_mode.FactionMode ?? "PICK").Trim().ToUpperInvariant();
+            switch (fm)
+            {
+                case "RANDOM": ShowFactionRandom(); break;
+                case "BAN": ShowFactionBan(); break;
+                default: ShowFactionPick(); break;
+            }
+        }
+
+        private Label AddSelectionTitle(string text)
+        {
+            return new Label
+            {
+                Parent = _selectionPanel,
+                Text = text,
+                Font = new Font("Segoe UI", 20, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 220, 100),
+                AutoSize = true,
+                Location = new Point(380, 30),
+            };
+        }
+
+        private Button AddSelectionButton(string text, Point location)
+        {
+            var btn = new Button
+            {
+                Parent = _selectionPanel,
+                Text = text,
+                Font = new Font("Segoe UI", 13, FontStyle.Bold),
+                Size = new Size(220, 45),
+                Location = location,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(50, 120, 50),
+                ForeColor = Color.White,
+            };
+            btn.FlatAppearance.BorderSize = 0;
+            return btn;
+        }
+
+        private void ShowFactionPick()
+        {
+            _selectionPanel.Controls.Clear();
+            AddSelectionTitle("Выберите фракции");
+
+            var all = GameDataParser.SelectableFactions;
+
+            new Label
+            {
+                Parent = _selectionPanel,
+                Text = "Игрок 1:",
+                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                ForeColor = Color.FromArgb(100, 180, 255),
+                AutoSize = true,
+                Location = new Point(350, 220),
+            };
+            var cmb1 = new ComboBox
+            {
+                Parent = _selectionPanel,
+                Location = new Point(460, 218),
+                Size = new Size(250, 30),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Font = new Font("Segoe UI", 11),
+                BackColor = Color.FromArgb(50, 50, 65),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+            };
+            foreach (string f in all) cmb1.Items.Add(f);
+            cmb1.SelectedIndex = 0;
+
+            new Label
+            {
+                Parent = _selectionPanel,
+                Text = "Игрок 2:",
+                Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 130, 130),
+                AutoSize = true,
+                Location = new Point(350, 280),
+            };
+            var cmb2 = new ComboBox
+            {
+                Parent = _selectionPanel,
+                Location = new Point(460, 278),
+                Size = new Size(250, 30),
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                Font = new Font("Segoe UI", 11),
+                BackColor = Color.FromArgb(50, 50, 65),
+                ForeColor = Color.White,
+                FlatStyle = FlatStyle.Flat,
+            };
+            foreach (string f in all) cmb2.Items.Add(f);
+            cmb2.SelectedIndex = 1;
+
+            var btn = AddSelectionButton("Начать", new Point(450, 370));
+            btn.Click += (s, ev) =>
+            {
+                var f1 = cmb1.SelectedItem?.ToString() ?? "";
+                var f2 = cmb2.SelectedItem?.ToString() ?? "";
+                if (f1 == f2)
+                {
+                    MessageBox.Show("Выберите разные фракции!", "Парсер", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+                StartWithFactions(f1, f2);
+            };
+        }
+
+        private void ShowFactionRandom()
+        {
+            _selectionPanel.Controls.Clear();
+            AddSelectionTitle("Случайные фракции");
+
+            var rng = new Random();
+            var picked = GameDataParser.SelectableFactions.OrderBy(_ => rng.Next()).Take(2).ToList();
+
+            new Label
+            {
+                Parent = _selectionPanel,
+                Text = $"Игрок 1: {picked[0]}",
+                Font = new Font("Segoe UI", 14, FontStyle.Bold),
+                ForeColor = Color.FromArgb(100, 180, 255),
+                AutoSize = true,
+                Location = new Point(380, 200),
+            };
+            new Label
+            {
+                Parent = _selectionPanel,
+                Text = $"Игрок 2: {picked[1]}",
+                Font = new Font("Segoe UI", 14, FontStyle.Bold),
+                ForeColor = Color.FromArgb(255, 130, 130),
+                AutoSize = true,
+                Location = new Point(380, 250),
+            };
+
+            var btn = AddSelectionButton("Начать", new Point(450, 340));
+            btn.Click += (s, ev) => StartWithFactions(picked[0], picked[1]);
+        }
+
+        private void ShowFactionBan()
+        {
+            _selectionPanel.Controls.Clear();
+            AddSelectionTitle("Бан фракций");
+
+            var rng = new Random();
+            int poolSize = Math.Min(Math.Max(_mode.BanPoolSize, 2), GameDataParser.SelectableFactions.Length);
+            var pool = GameDataParser.SelectableFactions.OrderBy(_ => rng.Next()).Take(poolSize).ToList();
+            int needBans = poolSize - 2;
+            var banned = new HashSet<string>();
+
+            var info = new Label
+            {
+                Parent = _selectionPanel,
+                Text = $"Забаньте {needBans} фракций (останется 2, раздаются игрокам случайно). Забанено 0/{needBans}",
+                Font = new Font("Segoe UI", 11),
+                ForeColor = Color.LightGray,
+                AutoSize = true,
+                Location = new Point(120, 80),
+            };
+
+            var btn = AddSelectionButton("Начать", new Point(450, 120 + poolSize * 56 + 20));
+
+            void UpdateBtn() => btn.Enabled = banned.Count == needBans;
+
+            int y = 120;
+            foreach (var f in pool)
+            {
+                var card = new Panel
+                {
+                    Parent = _selectionPanel,
+                    Location = new Point(300, y),
+                    Size = new Size(440, 46),
+                    BackColor = Color.FromArgb(50, 50, 70),
+                    BorderStyle = BorderStyle.FixedSingle,
+                    Cursor = Cursors.Hand,
+                };
+                var lbl = new Label
+                {
+                    Parent = card,
+                    Text = f,
+                    Font = new Font("Segoe UI", 12, FontStyle.Bold),
+                    ForeColor = Color.White,
+                    AutoSize = true,
+                    Location = new Point(12, 10),
+                    Cursor = Cursors.Hand,
+                };
+                var ff = f;
+                void Toggle()
+                {
+                    if (banned.Contains(ff)) banned.Remove(ff);
+                    else { if (banned.Count >= needBans) return; banned.Add(ff); }
+                    bool isBanned = banned.Contains(ff);
+                    card.BackColor = isBanned ? Color.FromArgb(120, 50, 50) : Color.FromArgb(50, 50, 70);
+                    lbl.ForeColor = isBanned ? Color.FromArgb(255, 170, 170) : Color.White;
+                    info.Text = $"Забаньте {needBans} фракций (останется 2, раздаются игрокам случайно). Забанено {banned.Count}/{needBans}";
+                    UpdateBtn();
+                }
+                card.Click += (s, ev) => Toggle();
+                lbl.Click += (s, ev) => Toggle();
+                y += 56;
+            }
+
+            btn.Click += (s, ev) =>
+            {
+                var remain = pool.Where(f => !banned.Contains(f)).OrderBy(_ => rng.Next()).ToList();
+                if (remain.Count < 2) return;
+                StartWithFactions(remain[0], remain[1]);
+            };
+
+            UpdateBtn();
+        }
+
+        // Парсинг юнитов выбранных фракций → экран выбора героев.
+        private void StartWithFactions(string f1, string f2)
+        {
+            _faction1 = f1;
+            _faction2 = f2;
+
+            _selectionPanel.Controls.Clear();
+            var status = new Label
+            {
+                Parent = _selectionPanel,
+                Text = "Загрузка юнитов...",
+                Font = new Font("Segoe UI", 12),
+                ForeColor = Color.Gray,
+                Size = new Size(700, 200),
+                Location = new Point(230, 340),
+                TextAlign = ContentAlignment.TopCenter,
+            };
+
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                var c1 = _parser!.ParseCreatures(new List<string> { f1 });
+                var c2 = _parser!.ParseCreatures(new List<string> { f2 });
+                return (c1, c2, _parser.DiagInfo);
+            }).ContinueWith(task =>
+            {
+                if (task.IsFaulted)
+                {
+                    status.Text = "Ошибка: " + task.Exception?.InnerException?.Message;
+                    status.ForeColor = Color.Red;
+                    return;
+                }
+
+                var (c1, c2, diag) = task.Result;
+                if (c1.Count == 0 && c2.Count == 0)
+                {
+                    status.Text = "Юниты не найдены.\n\nДиагностика:\n" + diag;
+                    status.ForeColor = Color.OrangeRed;
+                    return;
+                }
+
+                _creatures1 = c1;
+                _creatures2 = c2;
                 ShowHeroSelection();
             }, System.Threading.Tasks.TaskScheduler.FromCurrentSynchronizationContext());
+        }
+
+        // ── Экран 3: выбор героев (3 родных + опц. 1 неродной) ──────────────────────
+        private List<HeroInfo> BuildHeroChoices(string nativeClass, Random rng)
+        {
+            var list = _allHeroes.Where(h => h.HeroClass == nativeClass)
+                .OrderBy(_ => rng.Next()).Take(3).ToList();
+
+            if (_mode.AllowNonNativeHero)
+            {
+                var nonNative = _allHeroes
+                    .Where(h => h.HeroClass != nativeClass && !string.IsNullOrEmpty(h.HeroClass))
+                    .OrderBy(_ => rng.Next()).FirstOrDefault();
+                if (nonNative != null) list.Add(nonNative);
+            }
+            return list;
+        }
+
+        private List<Panel> BuildHeroColumn(List<HeroInfo> heroes, string nativeClass, int x, Action<HeroInfo> onSelect)
+        {
+            var panels = new List<Panel>();
+            int yOff = 110;
+            for (int i = 0; i < heroes.Count; i++)
+            {
+                var hero = heroes[i];
+                var panel = BuildHeroCard(hero, new Point(x, yOff + i * 140));
+                panel.Parent = _selectionPanel;
+                panels.Add(panel);
+
+                if (hero.HeroClass != nativeClass)
+                {
+                    new Label
+                    {
+                        Parent = panel,
+                        Text = "НЕРОДНОЙ",
+                        Font = new Font("Segoe UI", 8, FontStyle.Bold),
+                        ForeColor = Color.FromArgb(255, 180, 90),
+                        BackColor = Color.FromArgb(70, 50, 30),
+                        AutoSize = true,
+                        Location = new Point(390, 5),
+                        Cursor = Cursors.Hand,
+                    };
+                }
+
+                void Sel()
+                {
+                    onSelect(hero);
+                    foreach (var p in panels) p.BackColor = Color.FromArgb(50, 50, 70);
+                    panel.BackColor = Color.FromArgb(60, 120, 60);
+                }
+                panel.Click += (s, ev) => Sel();
+                foreach (Control c in panel.Controls) c.Click += (s, ev) => Sel();
+            }
+            return panels;
         }
 
         private void ShowHeroSelection()
@@ -328,8 +631,8 @@ namespace Launcher
             string class1 = GameDataParser.FactionToHeroClass.TryGetValue(_faction1, out var hc1) ? hc1 : "";
             string class2 = GameDataParser.FactionToHeroClass.TryGetValue(_faction2, out var hc2) ? hc2 : "";
 
-            var heroes1 = _allHeroes.Where(h => h.HeroClass == class1).OrderBy(_ => rng.Next()).Take(2).ToList();
-            var heroes2 = _allHeroes.Where(h => h.HeroClass == class2).OrderBy(_ => rng.Next()).Take(2).ToList();
+            var heroes1 = BuildHeroChoices(class1, rng);
+            var heroes2 = BuildHeroChoices(class2, rng);
 
             new Label
             {
@@ -338,17 +641,11 @@ namespace Launcher
                 Font = new Font("Segoe UI", 18, FontStyle.Bold),
                 ForeColor = Color.FromArgb(255, 220, 100),
                 AutoSize = true,
-                Location = new Point(420, 30),
+                Location = new Point(420, 20),
             };
 
             HeroInfo? selectedHero1 = null;
             HeroInfo? selectedHero2 = null;
-
-            void UpdateSelection(Panel panel, Panel? otherPanel)
-            {
-                panel.BackColor = Color.FromArgb(60, 120, 60);
-                if (otherPanel != null) otherPanel.BackColor = Color.FromArgb(50, 50, 70);
-            }
 
             new Label
             {
@@ -359,29 +656,6 @@ namespace Launcher
                 AutoSize = true,
                 Location = new Point(50, 80),
             };
-
-            int yOff = 110;
-            Panel? p1a = null, p1b = null;
-            for (int i = 0; i < heroes1.Count; i++)
-            {
-                var hero = heroes1[i];
-                var panel = BuildHeroCard(hero, new Point(50, yOff + i * 140));
-                panel.Parent = _selectionPanel;
-                int idx = i;
-                panel.Click += (s, ev) =>
-                {
-                    selectedHero1 = hero;
-                    UpdateSelection(panel, idx == 0 ? p1b : p1a);
-                };
-                foreach (Control c in panel.Controls)
-                    c.Click += (s, ev) =>
-                    {
-                        selectedHero1 = hero;
-                        UpdateSelection(panel, idx == 0 ? p1b : p1a);
-                    };
-                if (i == 0) p1a = panel; else p1b = panel;
-            }
-
             new Label
             {
                 Parent = _selectionPanel,
@@ -392,34 +666,17 @@ namespace Launcher
                 Location = new Point(580, 80),
             };
 
-            Panel? p2a = null, p2b = null;
-            for (int i = 0; i < heroes2.Count; i++)
-            {
-                var hero = heroes2[i];
-                var panel = BuildHeroCard(hero, new Point(580, yOff + i * 140));
-                panel.Parent = _selectionPanel;
-                int idx = i;
-                panel.Click += (s, ev) =>
-                {
-                    selectedHero2 = hero;
-                    UpdateSelection(panel, idx == 0 ? p2b : p2a);
-                };
-                foreach (Control c in panel.Controls)
-                    c.Click += (s, ev) =>
-                    {
-                        selectedHero2 = hero;
-                        UpdateSelection(panel, idx == 0 ? p2b : p2a);
-                    };
-                if (i == 0) p2a = panel; else p2b = panel;
-            }
+            var col1 = BuildHeroColumn(heroes1, class1, 50, h => selectedHero1 = h);
+            var col2 = BuildHeroColumn(heroes2, class2, 580, h => selectedHero2 = h);
 
+            int btnY = 110 + Math.Max(heroes1.Count, heroes2.Count) * 140 + 10;
             var btnConfirm = new Button
             {
                 Parent = _selectionPanel,
                 Text = "Подтвердить",
                 Font = new Font("Segoe UI", 13, FontStyle.Bold),
                 Size = new Size(200, 45),
-                Location = new Point(450, 420),
+                Location = new Point(450, btnY),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.FromArgb(50, 120, 50),
                 ForeColor = Color.White,
@@ -435,8 +692,8 @@ namespace Launcher
                 ShowMainContent(_creatures1, _creatures2, _allArtifacts, selectedHero1, selectedHero2);
             };
 
-            if (heroes1.Count > 0) { selectedHero1 = heroes1[0]; if (p1a != null) p1a.BackColor = Color.FromArgb(60, 120, 60); }
-            if (heroes2.Count > 0) { selectedHero2 = heroes2[0]; if (p2a != null) p2a.BackColor = Color.FromArgb(60, 120, 60); }
+            if (heroes1.Count > 0) { selectedHero1 = heroes1[0]; col1[0].BackColor = Color.FromArgb(60, 120, 60); }
+            if (heroes2.Count > 0) { selectedHero2 = heroes2[0]; col2[0].BackColor = Color.FromArgb(60, 120, 60); }
         }
 
         private Panel BuildHeroCard(HeroInfo hero, Point location)
@@ -531,6 +788,28 @@ namespace Launcher
             form.ShowDialog();
         }
 
+        // Множитель пула покупки по тиру: ArmyGrowth[tier] + FactionGrowthBonus[faction][tier].
+        // Если в режиме ArmyGrowth не задан — используется дефолтный TierMultipliers (null → встроенный).
+        private Func<int, int>? TierMultResolver(string faction)
+        {
+            var growth = _mode.ArmyGrowth;
+            var fbonus = _mode.FactionGrowthBonus;
+            if ((growth == null || growth.Count == 0) && (fbonus == null || fbonus.Count == 0))
+                return null;
+
+            List<int>? bonusArr = null;
+            fbonus?.TryGetValue(faction, out bonusArr);
+
+            return tier =>
+            {
+                int idx = tier - 1;
+                int baseMult = (growth != null && idx >= 0 && idx < growth.Count)
+                    ? growth[idx] : TierMultipliers.Get(tier);
+                int bonus = (bonusArr != null && idx >= 0 && idx < bonusArr.Count) ? bonusArr[idx] : 0;
+                return Math.Max(0, baseMult + bonus);
+            };
+        }
+
         private void ShowMainContent(List<CreatureInfo> creatures1, List<CreatureInfo> creatures2,
             List<ArtifactInfo> artifacts, HeroInfo hero1, HeroInfo hero2)
         {
@@ -588,8 +867,8 @@ namespace Launcher
             _tabs.Visible = true;
             _tabs.TabPages.Clear();
 
-            var goldState1 = new GoldState(_totalGold);
-            var goldState2 = new GoldState(_totalGold);
+            var goldState1 = new GoldState(_mode.StartGold);
+            var goldState2 = new GoldState(_mode.StartGold);
 
             var tabArmy1 = new TabPage("Армия") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
             var tabArt1 = new TabPage("Артефакты") { BackColor = Color.FromArgb(30, 30, 40), ForeColor = Color.White };
@@ -610,14 +889,20 @@ namespace Launcher
             var customArts1 = _parser != null ? PresetGenerator.GetHeroArtifacts(_parser, hero1.InternalName) : null;
             var customArts2 = _parser != null ? PresetGenerator.GetHeroArtifacts(_parser, hero2.InternalName) : null;
 
-            var armyTab1 = new ArmyPurchaseTab(tabArmy1, creatures1, goldState1);
-            var artTab1  = new ArtifactTab(tabArt1, artifacts, goldState1, customArts1);
-            var lvlTab1  = new LevelingTab(tabLvl1, hero1, _allSkills, hci1, goldState1, perks1);
-            var spellTab1 = new SpellTab(tabSpells1, _allSpells, _faction1, hero1.HeroClass, goldState1);
-            var armyTab2 = new ArmyPurchaseTab(tabArmy2, creatures2, goldState2);
-            var artTab2  = new ArtifactTab(tabArt2, artifacts, goldState2, customArts2);
-            var lvlTab2  = new LevelingTab(tabLvl2, hero2, _allSkills, hci2, goldState2, perks2);
-            var spellTab2 = new SpellTab(tabSpells2, _allSpells, _faction2, hero2.HeroClass, goldState2);
+            var armyTab1 = new ArmyPurchaseTab(tabArmy1, creatures1, goldState1, TierMultResolver(_faction1));
+            var artTab1  = new ArtifactTab(tabArt1, artifacts, goldState1, customArts1,
+                _mode.ArtifactRerollCost, _mode.AllowArtifactReroll, _mode.BannedArtifacts);
+            var lvlTab1  = new LevelingTab(tabLvl1, hero1, _allSkills, hci1, goldState1, perks1,
+                _mode.MaxLevel, _mode.AllowExtraLevel);
+            var spellTab1 = new SpellTab(tabSpells1, _allSpells, _faction1, hero1.HeroClass, goldState1,
+                _mode.SpellRerollCost, _mode.AllowSpellReroll, _mode.MageGuildFloors, _mode.WarcryFloors, _mode.RuneFloors);
+            var armyTab2 = new ArmyPurchaseTab(tabArmy2, creatures2, goldState2, TierMultResolver(_faction2));
+            var artTab2  = new ArtifactTab(tabArt2, artifacts, goldState2, customArts2,
+                _mode.ArtifactRerollCost, _mode.AllowArtifactReroll, _mode.BannedArtifacts);
+            var lvlTab2  = new LevelingTab(tabLvl2, hero2, _allSkills, hci2, goldState2, perks2,
+                _mode.MaxLevel, _mode.AllowExtraLevel);
+            var spellTab2 = new SpellTab(tabSpells2, _allSpells, _faction2, hero2.HeroClass, goldState2,
+                _mode.SpellRerollCost, _mode.AllowSpellReroll, _mode.MageGuildFloors, _mode.WarcryFloors, _mode.RuneFloors);
 
             _tabs.TabPages.Add(tabArmy1);
             _tabs.TabPages.Add(tabArt1);
@@ -698,6 +983,7 @@ namespace Launcher
         private readonly TabPage _tab;
         private readonly GoldState _gold;
         private readonly List<CreatureInfo> _creatures;
+        private readonly Func<int, int>? _tierMult;   // tier → множитель пула (режим/фракция)
         private readonly Dictionary<int, TierPool> _pools = new();
         private readonly ArmySlot[] _slots = new ArmySlot[7];
 
@@ -723,11 +1009,13 @@ namespace Launcher
         private Panel _shopPanel = null!;
         private Label _goldLabel = null!;
 
-        public ArmyPurchaseTab(TabPage tab, List<CreatureInfo> creatures, GoldState gold)
+        public ArmyPurchaseTab(TabPage tab, List<CreatureInfo> creatures, GoldState gold,
+            Func<int, int>? tierMult = null)
         {
             _tab = tab;
             _gold = gold;
             _creatures = creatures;
+            _tierMult = tierMult;
 
             for (int i = 0; i < 7; i++) _slots[i] = new ArmySlot();
 
@@ -774,7 +1062,7 @@ namespace Launcher
                     _pools[baseTier].Creatures.Add(c);
             }
 
-            foreach (var pool in _pools.Values) pool.Initialize();
+            foreach (var pool in _pools.Values) pool.Initialize(_tierMult?.Invoke(pool.Tier));
         }
 
         // ── построение UI (один раз) ─────────────────────────────────────────────
@@ -1381,7 +1669,8 @@ namespace Launcher
         private readonly List<ArtifactInfo> _allArtifacts;
         private readonly List<CustomArtifact>? _customArtifacts;
         private readonly Random _rng = new();
-        private const int RerollCost = 5000;
+        private readonly int RerollCost;
+        private readonly bool _allowReroll;
 
         public IReadOnlyDictionary<string, ArtifactInfo?> Equipped => _equipped;
 
@@ -1425,11 +1714,18 @@ namespace Launcher
         private Label _goldLabel = null!;
 
         public ArtifactTab(TabPage tab, List<ArtifactInfo> allArtifacts, GoldState gold,
-            List<CustomArtifact>? customArtifacts = null)
+            List<CustomArtifact>? customArtifacts = null, int rerollCost = 5000,
+            bool allowReroll = true, IEnumerable<string>? bannedArtifacts = null)
         {
             _tab = tab;
             _gold = gold;
-            _allArtifacts = allArtifacts;
+            RerollCost = rerollCost;
+            _allowReroll = allowReroll;
+            var banned = bannedArtifacts == null
+                ? null : new HashSet<string>(bannedArtifacts, StringComparer.OrdinalIgnoreCase);
+            _allArtifacts = banned == null || banned.Count == 0
+                ? allArtifacts
+                : allArtifacts.Where(a => !banned.Contains(a.Id)).ToList();
             _customArtifacts = customArtifacts;
             foreach (var slot in SlotNames) _equipped[slot] = null;
 
@@ -1478,27 +1774,30 @@ namespace Launcher
                 BackColor = Color.FromArgb(30, 30, 40),
             };
 
-            var btnReroll = new Button
+            if (_allowReroll)
             {
-                Parent = shopPanel,
-                Text = $"Рерол ({RerollCost}g)",
-                Font = new Font("Segoe UI", 10, FontStyle.Bold),
-                Size = new Size(180, 35),
-                Location = new Point(5, 30 + 6 * 68 + 10),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(80, 60, 120),
-                ForeColor = Color.White,
-            };
-            btnReroll.FlatAppearance.BorderSize = 0;
-            btnReroll.Click += (s, ev) =>
-            {
-                if (!_gold.TrySpend(RerollCost))
+                var btnReroll = new Button
                 {
-                    MessageBox.Show("Недостаточно золота!", "Рерол", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-                RollAndRebuildCards();
-            };
+                    Parent = shopPanel,
+                    Text = $"Рерол ({RerollCost}g)",
+                    Font = new Font("Segoe UI", 10, FontStyle.Bold),
+                    Size = new Size(180, 35),
+                    Location = new Point(5, 30 + 6 * 68 + 10),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.FromArgb(80, 60, 120),
+                    ForeColor = Color.White,
+                };
+                btnReroll.FlatAppearance.BorderSize = 0;
+                btnReroll.Click += (s, ev) =>
+                {
+                    if (!_gold.TrySpend(RerollCost))
+                    {
+                        MessageBox.Show("Недостаточно золота!", "Рерол", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+                    RollAndRebuildCards();
+                };
+            }
 
             // ── панель экипировки ─────────────────────────────────────────────────
             var slotsPanel = new DoubleBufferedPanel
@@ -1988,10 +2287,11 @@ namespace Launcher
         private Label _goldCostLabel = null!;
 
         private const int MaxNonRacialSkills = 5;
-        private const int MaxLevel = 20;
+        private readonly int MaxLevel;
+        private readonly bool _allowExtraLevel;
 
         public LevelingTab(TabPage tab, HeroInfo hero, List<SkillInfo> allSkills, HeroClassInfo? heroClassInfo, GoldState gold,
-            List<HeroPerk>? customPerks = null)
+            List<HeroPerk>? customPerks = null, int maxLevel = 20, bool allowExtraLevel = true)
         {
             _tab = tab;
             _hero = hero;
@@ -1999,6 +2299,8 @@ namespace Launcher
             _heroClassInfo = heroClassInfo;
             _gold = gold;
             _customPerks = customPerks;
+            MaxLevel = maxLevel;
+            _allowExtraLevel = allowExtraLevel;
 
             InitializeHeroState();
             BuildUI();
@@ -2164,6 +2466,9 @@ namespace Launcher
             _statsLabel.Text = $"А:{a} З:{d} С:{s} М:{k}";
         }
 
+        // Достигнут ли потолок прокачки (доп. уровни запрещены режимом).
+        private bool AtLevelCap => !_allowExtraLevel && _heroLevel >= MaxLevel;
+
         private int GetLevelUpCost()
         {
             if (_heroLevel < MaxLevel) return 0;
@@ -2173,6 +2478,12 @@ namespace Launcher
 
         private void UpdateGoldCostLabel()
         {
+            if (AtLevelCap)
+            {
+                _goldCostLabel.Text = $"Макс. уровень ({MaxLevel})";
+                _levelUpBtn.Enabled = false;
+                return;
+            }
             int cost = GetLevelUpCost();
             _goldCostLabel.Text = cost == 0 ? "Бесплатно" : $"Стоимость: {cost}g (Осталось: {_gold.Remaining}g)";
             _levelUpBtn.Enabled = cost == 0 || _gold.Remaining >= cost;
@@ -2180,6 +2491,7 @@ namespace Launcher
 
         private void DoLevelUp()
         {
+            if (AtLevelCap) return;
             int cost = GetLevelUpCost();
             if (cost > 0 && !_gold.TrySpend(cost)) return;
 
@@ -2890,7 +3202,11 @@ namespace Launcher
         private readonly string _heroClass;
         private readonly Random _rng = new();
         private const int SwapCost = 5000;
-        private const int RerollCost = 5000;
+        private readonly int RerollCost;
+        private readonly bool _allowReroll;
+        private readonly int _mageFloors;
+        private readonly int _warcryFloors;
+        private readonly int _runeFloors;
 
         public IReadOnlyList<SpellInfo> ChosenSpells => _chosenSpells;
         public IReadOnlyList<SpellInfo> ChosenRunes => _chosenRunes;
@@ -2917,13 +3233,20 @@ namespace Launcher
         private Panel _spellsContainer = null!;
         private Label _goldLabel = null!;
 
-        public SpellTab(TabPage tab, List<SpellInfo> allSpells, string faction, string heroClass, GoldState gold)
+        public SpellTab(TabPage tab, List<SpellInfo> allSpells, string faction, string heroClass, GoldState gold,
+            int rerollCost = 5000, bool allowReroll = true,
+            int mageFloors = 5, int warcryFloors = 3, int runeFloors = 5)
         {
             _tab = tab;
             _gold = gold;
             _allSpells = allSpells;
             _faction = faction;
             _heroClass = heroClass;
+            RerollCost = rerollCost;
+            _allowReroll = allowReroll;
+            _mageFloors = Math.Max(0, mageFloors);
+            _warcryFloors = Math.Max(0, warcryFloors);
+            _runeFloors = Math.Max(0, runeFloors);
 
             BuildUI();
             RollSpells();
@@ -2955,27 +3278,30 @@ namespace Launcher
                 Text = GoldText(),
             };
 
-            var btnReroll = new Button
+            if (_allowReroll)
             {
-                Parent = _tab,
-                Text = $"Перебрать ({RerollCost} зол.)",
-                Font = new Font("Segoe UI", 9, FontStyle.Bold),
-                Size = new Size(180, 28),
-                Location = new Point(320, 6),
-                FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(60, 60, 80),
-                ForeColor = Color.White,
-            };
-            btnReroll.FlatAppearance.BorderSize = 0;
-            btnReroll.Click += (s, e) =>
-            {
-                if (!_gold.TrySpend(RerollCost))
+                var btnReroll = new Button
                 {
-                    MessageBox.Show("Недостаточно золота!", "Заклинания", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    return;
-                }
-                RollSpells();
-            };
+                    Parent = _tab,
+                    Text = $"Перебрать ({RerollCost} зол.)",
+                    Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                    Size = new Size(180, 28),
+                    Location = new Point(320, 6),
+                    FlatStyle = FlatStyle.Flat,
+                    BackColor = Color.FromArgb(60, 60, 80),
+                    ForeColor = Color.White,
+                };
+                btnReroll.FlatAppearance.BorderSize = 0;
+                btnReroll.Click += (s, e) =>
+                {
+                    if (!_gold.TrySpend(RerollCost))
+                    {
+                        MessageBox.Show("Недостаточно золота!", "Заклинания", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+                    RollSpells();
+                };
+            }
 
             _spellsContainer = new DoubleBufferedPanel
             {
@@ -3008,8 +3334,8 @@ namespace Launcher
             var warcries = _allSpells.Where(s => s.IsWarcry).ToList();
             var byLevel = warcries.GroupBy(s => s.Level).ToDictionary(g => g.Key, g => g.ToList());
 
-            // Floor 1: 2 warcries, Floors 2-3: 1 each
-            for (int floor = 1; floor <= 3; floor++)
+            // Floor 1: 2 warcries, Floors 2..N: 1 each (N = _warcryFloors)
+            for (int floor = 1; floor <= _warcryFloors; floor++)
             {
                 int count = floor == 1 ? 2 : 1;
                 if (byLevel.TryGetValue(floor, out var pool))
@@ -3033,7 +3359,7 @@ namespace Launcher
                 .GroupBy(s => (s.MagicSchool, s.Level))
                 .ToDictionary(g => g.Key, g => g.ToList());
 
-            for (int floor = 1; floor <= 5; floor++)
+            for (int floor = 1; floor <= _mageFloors; floor++)
             {
                 // Profiled: 1 spell from each profiled school (2 total)
                 var usedIds = new HashSet<string>();
@@ -3073,7 +3399,7 @@ namespace Launcher
             var runes = _allSpells.Where(s => s.IsRunic).ToList();
             var byLevel = runes.GroupBy(s => s.Level).ToDictionary(g => g.Key, g => g.ToList());
 
-            for (int floor = 1; floor <= 5; floor++)
+            for (int floor = 1; floor <= _runeFloors; floor++)
             {
                 if (byLevel.TryGetValue(floor, out var pool))
                 {
@@ -3093,7 +3419,7 @@ namespace Launcher
             if (IsBarbarian)
             {
                 y = BuildFloorHeader(y, "Боевые кличи");
-                for (int floor = 1; floor <= 3; floor++)
+                for (int floor = 1; floor <= _warcryFloors; floor++)
                 {
                     var floorSpells = _chosenSpells.Where(s => s.Level == floor).ToList();
                     y = BuildFloorRow(y, $"Уровень {floor}", floorSpells);
@@ -3102,7 +3428,7 @@ namespace Launcher
             else
             {
                 y = BuildFloorHeader(y, "Заклинания");
-                for (int floor = 1; floor <= 5; floor++)
+                for (int floor = 1; floor <= _mageFloors; floor++)
                 {
                     var floorSpells = _chosenSpells.Where(s => s.Level == floor).ToList();
                     y = BuildFloorRow(y, $"Уровень {floor}", floorSpells);
@@ -3113,7 +3439,7 @@ namespace Launcher
             {
                 y += 10;
                 y = BuildFloorHeader(y, "Рунная магия");
-                for (int floor = 1; floor <= 5; floor++)
+                for (int floor = 1; floor <= _runeFloors; floor++)
                 {
                     var floorRunes = _chosenRunes.Where(s => s.Level == floor).ToList();
                     if (floorRunes.Count > 0)
